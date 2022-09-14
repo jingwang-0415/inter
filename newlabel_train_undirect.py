@@ -228,7 +228,7 @@ if __name__ == '__main__':
         args.exp_name += '_typed'
     else:
         args.exp_name += '_untyped'
-    args.exp_name+="_simplegat(0.3)_newlabel_loss_change_undirect"
+    args.exp_name+="_simplegat(0.3)_try_newlabel"
 
     print(args)
     test_id = '{}'.format(args.logdir)
@@ -268,7 +268,7 @@ if __name__ == '__main__':
     scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=0.2)
 
     if args.test_only:
-        test_data = RetroCenterDatasets(root=data_root, data_split='testnewlabel_undirect')
+        test_data = RetroCenterDatasets(root=data_root, data_split='test')
         test_dataloader = DataLoader(test_data,
                                      batch_size=1* batch_size,
                                      shuffle=False,
@@ -277,7 +277,7 @@ if __name__ == '__main__':
         test(GAT_model, test_dataloader, data_split='test', save_pred=True)
         exit(0)
 
-    valid_data = RetroCenterDatasets(root=data_root, data_split='validnewlabel_undirect')
+    valid_data = RetroCenterDatasets(root=data_root, data_split='valid')
     valid_dataloader = DataLoader(valid_data,
                                   batch_size=1 * batch_size,
                                   shuffle=False,
@@ -287,7 +287,7 @@ if __name__ == '__main__':
         test(GAT_model, valid_dataloader)
         exit(0)
 
-    train_data = RetroCenterDatasets(root=data_root, data_split='trainnewlabel_undirect')
+    train_data = RetroCenterDatasets(root=data_root, data_split='train')
     train_dataloader = DataLoader(train_data,
                                   batch_size=batch_size,
                                   shuffle=True,
@@ -299,7 +299,7 @@ if __name__ == '__main__':
                                            shuffle=False,
                                            num_workers=0,
                                            collate_fn=collate)
-        test(GAT_model, test_train_dataloader, data_split='trainnewlabel_undirect', save_pred=True)
+        test(GAT_model, test_train_dataloader, data_split='train', save_pred=True)
         exit(0)
     csv_logger = CSVLogger(
         args=args,
@@ -353,6 +353,9 @@ if __name__ == '__main__':
             x_atom = torch.cat(x_atom, dim=0)
             atom_labels = torch.cat(atom_labels, dim=0)
             bond_labels = torch.cat(bond_labels_list, dim=0)
+            #一次尝试
+            one = torch.ones_like(bond_labels)
+            bond_labels = torch.where(bond_labels < 1, bond_labels, one)
             true_bond_label.extend(bond_labels.numpy().tolist())
             true_atom_label.extend(atom_labels.numpy().tolist())
             if not args.use_cpu:
@@ -378,8 +381,8 @@ if __name__ == '__main__':
 
 
             start = end = 0
-            e_label , _ = torch.max(e_pred,dim=1)
-            a_label , _ = torch.max(atom_pred,dim=1)
+            e_label , e_locas = torch.max(e_pred,dim=1)
+            a_label , a_locas = torch.max(atom_pred,dim=1)
             e_pred = torch.argmax(e_pred, dim=1)
             a_pred = torch.argmax(atom_pred,dim=1)
 
