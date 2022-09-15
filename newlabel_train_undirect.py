@@ -10,7 +10,7 @@ from util.misc import CSVLogger
 parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size',
                     type=int,
-                    default=400,
+                    default=1,
                     help='input batch size for training (default: 128)')
 parser.add_argument('--epochs',
                     type=int,
@@ -51,7 +51,7 @@ parser.add_argument('--typed',
                     help='if given reaction types')
 parser.add_argument('--use_cpu',
                     action='store_true',
-                    default=False,
+                    default=True,
                     help='use gpu or cpu')
 parser.add_argument('--load',
                     action='store_true',
@@ -137,6 +137,7 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
         atom_pred = torch.argmax(atom_pred, dim=1)
         bond_change_pred_list.extend(e_pred.cpu().tolist())
         pre_bond_label.extend(e_pred.cpu().numpy().tolist())
+        pre_atom_label.extend(atom_pred.cpu().numpy().tolist())
         start = end = 0
         edge_lens = list(map(lambda x: x.shape[0], bond_labels_list))
         cur_batch_size = len(edge_lens)
@@ -147,7 +148,7 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
             end += edge_lens[j]
             label_mol = bond_labels[start:end]
             pred_proab = e_pred[start:end]
-            true_atom_label = atom_labels[start:end]
+            real_atom_label = atom_labels[start:end]
 
             if torch.equal(pred_proab, label_mol):
                 correct += 1
@@ -170,7 +171,7 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
     for j in range(len(atomscope)):
         start = end
         end += atomscope[j]
-        if torch.equal(a_pred[start:end], atom_labels[start:end]):
+        if torch.equal(atom_pred[start:end], atom_labels[start:end]):
             acorrect += 1
     pred_lens_true_list = list(
         map(lambda x, y: x == y, bond_change_gt_list, bond_change_pred_list))
@@ -206,7 +207,7 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
     print('Bond disconnection acc (without auxiliary task): {:.6f}'.format(acc))
     print('Bond Disconnection TAcc: {:.5f}'.format(atomacc))
     sk_report = classification_report(true_bond_label, pre_bond_label)
-    files.write("\n" + str(epoch) + "valid bond result" + "\n")
+    files.write("\n" +data_split + " bond result" + "\n")
     files.write(sk_report)
     files.flush()
     sk_report = classification_report(true_atom_label, pre_atom_label)
@@ -228,7 +229,7 @@ if __name__ == '__main__':
         args.exp_name += '_typed'
     else:
         args.exp_name += '_untyped'
-    args.exp_name+="_simplegat(0.3)_try_newlabel"
+    args.exp_name+="_simplegat(0.3)_newlabelundirect"
 
     print(args)
     test_id = '{}'.format(args.logdir)
@@ -274,7 +275,7 @@ if __name__ == '__main__':
                                      shuffle=False,
                                      num_workers=0,
                                      collate_fn=collate)
-        test(GAT_model, test_dataloader, data_split='test', save_pred=True)
+        test(GAT_model, test_dataloader, data_split='test', save_pred=True,files=file)
         exit(0)
 
     valid_data = RetroCenterDatasets(root=data_root, data_split='valid')
@@ -353,9 +354,6 @@ if __name__ == '__main__':
             x_atom = torch.cat(x_atom, dim=0)
             atom_labels = torch.cat(atom_labels, dim=0)
             bond_labels = torch.cat(bond_labels_list, dim=0)
-            #一次尝试
-            one = torch.ones_like(bond_labels)
-            bond_labels = torch.where(bond_labels < 1, bond_labels, one)
             true_bond_label.extend(bond_labels.numpy().tolist())
             true_atom_label.extend(atom_labels.numpy().tolist())
             if not args.use_cpu:
@@ -367,6 +365,9 @@ if __name__ == '__main__':
 
             g_dgl = dgl.batch(x_graph)
 
+            a = g_dgl.adj(scipy_fmt='csr').toarray()
+            x,y = np.where(a==1)
+            location = list(zip(x,y))
             GAT_model.zero_grad()
             # batch graph
 
@@ -381,8 +382,8 @@ if __name__ == '__main__':
 
 
             start = end = 0
-            e_label , e_locas = torch.max(e_pred,dim=1)
-            a_label , a_locas = torch.max(atom_pred,dim=1)
+            e_label , _ = torch.max(e_pred,dim=1)
+            a_label , _ = torch.max(atom_pred,dim=1)
             e_pred = torch.argmax(e_pred, dim=1)
             a_pred = torch.argmax(atom_pred,dim=1)
 
