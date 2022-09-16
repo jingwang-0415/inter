@@ -1,4 +1,6 @@
 import argparse
+
+import numpy as np
 from sklearn.metrics import classification_report
 import torch
 from tqdm import tqdm
@@ -51,7 +53,7 @@ parser.add_argument('--typed',
                     help='if given reaction types')
 parser.add_argument('--use_cpu',
                     action='store_true',
-                    default=True,
+                    default=False,
                     help='use gpu or cpu')
 parser.add_argument('--load',
                     action='store_true',
@@ -229,7 +231,7 @@ if __name__ == '__main__':
         args.exp_name += '_typed'
     else:
         args.exp_name += '_untyped'
-    args.exp_name+="_simplegat(0.3)_newlabelundirect"
+    args.exp_name+="_simplegat(0.3)_newlabel_connet"
 
     print(args)
     test_id = '{}'.format(args.logdir)
@@ -350,18 +352,21 @@ if __name__ == '__main__':
             bond_labels_list = list(
                 map(lambda x, y: torch.masked_select(x.contiguous().view(-1, 1), y), bond_labels,
                     mask))
+            zero = torch.tensor(0)
 
             x_atom = torch.cat(x_atom, dim=0)
             atom_labels = torch.cat(atom_labels, dim=0)
             bond_labels = torch.cat(bond_labels_list, dim=0)
             true_bond_label.extend(bond_labels.numpy().tolist())
+            label_index = torch.arange(bond_labels.shape[0])
+
             true_atom_label.extend(atom_labels.numpy().tolist())
             if not args.use_cpu:
                 x_atom = x_atom.cuda()
-
+                label_index = label_index.cuda()
                 atom_labels = atom_labels.cuda()
                 bond_labels  = bond_labels.cuda()
-
+                zero = zero.cuda()
 
             g_dgl = dgl.batch(x_graph)
 
@@ -382,10 +387,29 @@ if __name__ == '__main__':
 
 
             start = end = 0
-            e_label , _ = torch.max(e_pred,dim=1)
-            a_label , _ = torch.max(atom_pred,dim=1)
+            e_p , e_label = torch.max(e_pred,dim=1)
+            a_p , a_label = torch.max(atom_pred,dim=1)
             e_pred = torch.argmax(e_pred, dim=1)
             a_pred = torch.argmax(atom_pred,dim=1)
+          #尝试定位损失
+            real_edtoatom = []
+            pre_edtoatom = []
+            real_edtoatom.append(zero)
+            pre_edtoatom.append(zero)
+            e_label =torch.where(e_label<1,e_label,label_index)
+            for i  in e_label.data:
+                if i != 0 :
+                    start , _ = location[i]
+
+                    pre_edtoatom.append(a_p[start])
+                    real_edtoatom.append(atom_labels[start])
+
+            pre_edtoatom = torch.stack(pre_edtoatom,dim=0)
+            real_edtoatom = torch.stack(real_edtoatom,dim=0)
+            # la = e_label[1]
+            # if torch.cuda.is_available():
+            #     e_label = e_label.cpu()
+            connect_loss = torch.nn.BCEWithLogitsLoss(reduction='sum')(pre_edtoatom,real_edtoatom.float())
 
             edge_lens = list(map(lambda x: x.shape[0], bond_labels_list))
             cur_batch_size = len(edge_lens)
@@ -400,7 +424,7 @@ if __name__ == '__main__':
             new_bond_pred = torch.where(e_pred < 1, e_pred,one)
             one = torch.ones_like(a_pred)
             new_atom_pred = torch.where(a_pred < 1, a_pred, one)
-            loss = loss_ce + loss_h + edge_global_losses+atom_global_losses
+            loss = loss_ce + loss_h+connect_loss
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
