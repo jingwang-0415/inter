@@ -5,7 +5,7 @@ from dgl.nn.pytorch.conv import GINConv
 from dgl.nn.pytorch.glob import SumPooling, AvgPooling, MaxPooling
 from model.graphcnn import GraphCNN, GraphCNNode
 from model.interGAT import GATNet
-
+import dgl
 class ApplyNodeFunc(nn.Module):
     def __init__(self, mlp):
         super(ApplyNodeFunc, self).__init__()
@@ -156,24 +156,46 @@ class TwoGINTorch(nn.Module):
 
 class TwoGIN(nn.Module):
     def __init__(self, num_layers, num_mlp_layers, input_dim, hidden_dim,
-                 output_dim, final_dropout,learn_eps,neighbor_pooling_type,in_dim,gat_num_layers,gat_hidden_dim,heads,use_gpu):
+                 output_dim, final_dropout,learn_eps,neighbor_pooling_type,in_dim,gat_hidden_dim,gat_num_layers,heads,use_gpu):
         super(TwoGIN, self).__init__()
         self.device = torch.device('cuda:0')
         self.hidden_dim = hidden_dim
         self.gin = StochasticGIN(num_layers, num_mlp_layers, input_dim, hidden_dim,
                  output_dim, final_dropout, learn_eps,
                  neighbor_pooling_type).to(self.device)
-        self.gat = GATNet(in_dim,gat_num_layers,gat_hidden_dim,heads,use_gpu).to(self.device)
+        self.gat = GATNet(in_dim,gat_hidden_dim,gat_num_layers,heads,use_gpu).to(self.device)
+        self.linear_e = nn.Sequential(
+            nn.Linear(128 * 2+16, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(128, 32),
+            nn.ReLU(inplace=True),
+            nn.Linear(32, 3),
+        )
+        self.linear_atom = nn.Sequential(
+            nn.Linear(128*2+16, 32),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(32, 2),
+        )
         #self.graphcnn = GraphCNN(5, num_mlp_layers, pre_input_dim, 16, 16, dropout_0, learn_eps, graph_pooling_type, neighbor_pooling_type, self.device).to(self.device)
-        self.fcl = FCL(hidden_dim+16, output_dim).to(self.device)
+        #self.fcl = FCL(hidden_dim+16, output_dim).to(self.device)
 
     def forward(self, g, h, edge_weight, graph, graph_h):
         #pre_h = self.graphcnn(graph)
         h = self.gin(g, h, edge_weight)
-        g,pre_h, e_fused = self.gat(graph,graph_h)
+        g,pre_h, h_readout,e = self.gat(graph,graph_h)
+
+        h = torch.cat((h,h_readout),1)
+        eh = dgl.broadcast_edges(g,h)
+        ah = dgl.broadcast_nodes(g,h)
+        a_fused = torch.cat((pre_h,ah),1)
+        e_fused = torch.cat((e,eh),1)
+        a_pre = self.linear_atom(a_fused)
+        b_pre = self.linear_e(e_fused)
         #h = torch.cat((h, pre_h), 1)
         #h = self.fcl(h)
-        return h
+        return a_pre,b_pre
 
 class ThreeGIN(nn.Module):
     def __init__(self, num_layers, num_mlp_layers, input_dim, pre_input_dim1, pre_input_dim2, hidden_dim,

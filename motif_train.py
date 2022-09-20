@@ -14,7 +14,7 @@ from util.misc import CSVLogger
 parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size',
                     type=int,
-                    default=1,
+                    default=2,
                     help='input batch size for training (default: 128)')
 parser.add_argument('--epochs',
                     type=int,
@@ -80,8 +80,8 @@ def collate(data):
     return map(list, zip(*data))
 
 
-def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=0,files=None):
-    GAT_model.eval()
+def test(model, test_dataloader,gat_dataloader, data_split='test', save_pred=False,bestacc=0,files=None):
+    model.eval()
     correct = 0.
     acorrect =0.
     total = 0.
@@ -96,9 +96,37 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
     # Bond disconnection number gt and prediction
     bond_change_gt_list = []
     bond_change_pred_list = []
-    for i, data in enumerate(tqdm(test_dataloader)):
-        rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, _, x_groups,atom_labels,bond_labels = data
+    progress_bar = tqdm(test_dataloader, ncols=80)
+    train_idx,valid_idx, test_idx = sep_data()
+    offset = 0
+    if data_split == 'valid':
+        offset = len(train_idx)
+    elif data_split == 'test':
+        offset = len(train_idx) + len(valid_idx)
+    for step, (input_nodes, seeds, blocks) in enumerate(progress_bar):
 
+        # for i, data in enumerate(progress_bar):
+
+        selected_idx = seeds
+        IDs = []
+        for block in blocks:
+            IDs.append(block.edata[dgl.EID])
+        rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, atom_labels, bond_labels = [], [], [], [], [], [], []
+        for i in selected_idx:
+            rxn, pattern_feat, atom, adj, graph, _, _, atom_label, bond_label = gat_dataloader[i-offset]
+            rxn_class.append(rxn)
+            x_pattern_feat.append(pattern_feat)
+            x_atom.append(atom)
+            x_adj.append(adj)
+            x_graph.append(graph)
+            atom_labels.append(atom_label)
+            bond_labels.append(bond_label)
+
+        #for i, data in enumerate(tqdm(test_dataloader)):
+        batch_inputs, batch_labels, batch_edge_weight = load_subtensor(node_features, labels, edge_weight, IDs,
+                                                         seeds, input_nodes, device)
+        #block means  g
+        blocks = [block.int().to(device) for block in blocks]
         x_atom = list(map(lambda x: torch.from_numpy(x).float(), x_atom))
         x_pattern_feat = list(
             map(lambda x: torch.from_numpy(x).float(), x_pattern_feat))
@@ -140,7 +168,8 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
             bond_labels  = bond_labels.cuda()
         g_dgl = dgl.batch(x_graph)
 
-        atom_pred, e_pred = GAT_model(g_dgl, x_atom)
+        atom_pred, e_pred = gin(blocks, batch_inputs, batch_edge_weight, g_dgl, x_atom)
+
         e_pred = e_pred.squeeze()
         loss_h = nn.CrossEntropyLoss(reduction='sum')(atom_pred,
                                                       atom_labels)
@@ -217,7 +246,7 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
     print("before best_acc is:{} ".format(bestacc))
     if bestacc<acc:
         if bestacc!=0:
-            torch.save(GAT_model.state_dict(),
+            torch.save(model.state_dict(),
                    'checkpoints_3/{}best_checkpoint.pt'.format(args.exp_name))
     print('Bond disconnection acc (without auxiliary task): {:.6f}'.format(acc))
     print('Bond Disconnection TAcc: {:.5f}'.format(atomacc))
@@ -246,7 +275,8 @@ def sep_data():
     train_idx = [i for i in range(train_length)]
     valid_idx = [i for i in range(train_length,valid_length+train_length)]
     test_idx = [i for i in range(train_length+valid_length,test_length+valid_length+train_length)]
-    random.shuffle(train_idx)
+    if not args.test_on_train:
+        random.shuffle(train_idx)
     return train_idx,valid_idx, test_idx
 def load_motif(train_idx,valid_idx, test_idx):
     if args.use_cpu:
@@ -353,19 +383,11 @@ if __name__ == '__main__':
     #                              lr=args.lr)
     # scheduler = MultiStepLR(gat_optimizer, milestones=milestones, gamma=0.2)
 
-    gin = TwoGIN(args.l_num, 2, in_feats, args.h_dim, 2, args.drop_n, args.learn_eps, 'sum',args.in_dim,args.gat_layers,args.hidden_dim,args.heads, use_gpu=(args.use_cpu == False),).to(device)
+    gin = TwoGIN(args.l_num, 2, in_feats, args.h_dim, 2, args.drop_n, args.learn_eps, 'sum',args.in_dim,args.hidden_dim,args.gat_layers,args.heads, use_gpu=(args.use_cpu == False),).to(device)
     loss_fcn = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(gin.parameters(), lr=args.lr, weight_decay=args.w_d)
     scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=0.2)
-    if args.test_only:
-        test_data = RetroCenterDatasets(root=data_root, data_split='test')
-        # test_dataloader = DataLoader(test_data,
-        #                              batch_size=1* batch_size,
-        #                              shuffle=False,
-        #                              num_workers=0,
-        #                              collate_fn=collate)
-        # test(GAT_model, test_dataloader, data_split='test', save_pred=True,files=file)
-        exit(0)
+
     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(3)
     motif_train_dataloader = dgl.dataloading.NodeDataLoader(
         g,
@@ -386,6 +408,24 @@ if __name__ == '__main__':
         drop_last=False,
     )
 
+    if args.test_only:
+        motif_test_dataloader = dgl.dataloading.NodeDataLoader(
+            g,
+            test_nid,
+            sampler,
+            device=device,
+            batch_size=args.batch_size,
+            shuffle=False,
+            drop_last=False,
+        )
+        test_data = RetroCenterDatasets(root=data_root, data_split='test')
+        # test_dataloader = DataLoader(test_data,
+        #                              batch_size=1* batch_size,
+        #                              shuffle=False,
+        #                              num_workers=0,
+        #                              collate_fn=collate)
+        test(gin, motif_test_dataloader,test_data, data_split='test', save_pred=True, files=file)
+        exit(0)
     gat_valid_data = RetroCenterDatasets(root=data_root, data_split='valid')
     # valid_dataloader = DataLoader(valid_data,
     #                               batch_size=1 * batch_size,
@@ -403,12 +443,8 @@ if __name__ == '__main__':
     #                               num_workers=0,
     #                               collate_fn=collate)
     if args.test_on_train:
-        # test_train_dataloader = DataLoader(train_data,
-        #                                    batch_size=1 * batch_size,
-        #                                    shuffle=False,
-        #                                    num_workers=0,
-        #                                    collate_fn=collate)
-        # test(GAT_model, test_train_dataloader, data_split='train', save_pred=True)
+
+        test(gin, motif_train_dataloader,gat_train_data, data_split='train', save_pred=True)
         exit(0)
     csv_logger = CSVLogger(
         args=args,
@@ -612,22 +648,22 @@ if __name__ == '__main__':
         file.flush()
 
 
-        #if epoch % 5 == 0:
+        if epoch % 5 == 0:
 
 
-            # valid_acc,atomacc= test(GAT_model, valid_dataloader,bestacc=local_acc,files=file)
-            # if valid_acc>local_acc:
-            #     local_acc=valid_acc
-            # row = {
-            #     'epoch': str(epoch),
-            #     'train_acc': str(train_acc),
-            #     'valid_acc': str(valid_acc),
-            #     'valid_atomacc': str(atomacc),
-            #     'train_loss': str(train_loss),
-            # }
-            #csv_logger.writerow(row)
+            valid_acc,atomacc= test(gin, motif_val_dataloader,gat_valid_data,bestacc=local_acc,files=file,data_split='valid')
+            if valid_acc>local_acc:
+                local_acc=valid_acc
+            row = {
+                'epoch': str(epoch),
+                'train_acc': str(train_acc),
+                'valid_acc': str(valid_acc),
+                'valid_atomacc': str(atomacc),
+                'train_loss': str(train_loss),
+            }
+            csv_logger.writerow(row)
 
 
     csv_logger.close()
-    # torch.save(GAT_model.state_dict(),
-    #            'checkpoints_3/{}_checkpoint.pt'.format(args.exp_name))
+    torch.save(gin.state_dict(),
+               'checkpoints_3/{}_checkpoint.pt'.format(args.exp_name))

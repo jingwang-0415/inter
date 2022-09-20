@@ -225,11 +225,12 @@ class GATNet(nn.Module):
         #atom_pred = self.linear_atom(h)
         #
         h_readout = dgl.mean_nodes(g, 'h')
+
         #h_pred = self.linear_h(h_readout)
         # Edge prediction
-        eh = dgl.broadcast_edges(g, h_readout)
-        e_fused = torch.cat((eh, e), dim=1)
+        #eh = dgl.broadcast_edges(g, h_readout)
+        #e_fused = torch.cat((eh, e), dim=1)
         #e_pred = self.linear_e(e_fused)
 
-        return g,h, e_fused
+        return g,h, h_readout,e
 
