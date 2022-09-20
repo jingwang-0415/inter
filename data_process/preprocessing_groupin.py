@@ -333,6 +333,7 @@ def preprocess(save_dir, reactants, products,smiles, reaction_types=None,):
         #     print(bond.GetIdx())
         reactant_mol = Chem.MolFromSmiles(reactant)
         product_adj = Chem.rdmolops.GetAdjacencyMatrix(product_mol)
+
         product_adj = product_adj + np.eye(product_adj.shape[0])
         product_adj = product_adj.astype(bool)
         reactant_adj = Chem.rdmolops.GetAdjacencyMatrix(reactant_mol)
@@ -359,12 +360,12 @@ def preprocess(save_dir, reactants, products,smiles, reaction_types=None,):
         bond_labels = np.zeros((atom_num, atom_num))
         for atom_label in atom_edits.items():
             id,label = atom_label
-            atom_labels[id-1] = label
+            atom_labels[id] = label
         for bond_label in bond_edits.items():
             ids,label = bond_label
             id1 , id2 =ids
-            bond_labels[id1-1][id2-1] = label
-            bond_labels[id2 -1 ][id1 - 1] = label
+            bond_labels[id1][id2] = label
+            bond_labels[id2][id1] = label
         rxn_data = {
             'rxn_type': reaction_types[index],
             'product_adj': product_adj,
@@ -416,7 +417,7 @@ if __name__ == '__main__':
         save_dir = os.path.join(savedir, data_set)
         csv_path = os.path.join(datadir, data_set + '.csv')
         csv = pd.read_csv(csv_path)
-        reaction_list = csv['rxn_smiles']
+        reaction_list = csv['reactants>reagents>production']
         reactant_smarts_list = list(
             map(lambda x: x.split('>>')[0], reaction_list))
         product_smarts_list = list(

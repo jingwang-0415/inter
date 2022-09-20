@@ -345,6 +345,7 @@ if __name__ == '__main__':
                 map(lambda x: torch.from_numpy(x).long(), atom_labels))
             for atom_label in atom_labels :
                 atomscope.extend(atom_label.shape)
+
             bond_labels = list(
                 map(lambda x: torch.from_numpy(x).long(), bond_labels))
             x_adj = list(map(lambda x: torch.from_numpy(np.array(x)), x_adj))
