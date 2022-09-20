@@ -39,6 +39,10 @@ class FileLoader(object):
                 atom_symbol[begin] = atom_label[begin]
                 atom_symbol[end] = atom_label[end]
         graph_label = np.where(bond_label>0)[0]
+        if len(edges) == 0:
+            edges.append((0,0))
+            atom_symbol[0] = atom_label[0]
+            print(Chem.MolToSmiles(mol))
         if graph_label.size == 0:
             graph_label=0
         else :
@@ -111,6 +115,7 @@ class FileLoader(object):
         all_graph_labels= []
         all_edge_weights = []
         all_atom_symbols = []
+        count = 0
         for tag in ['train','valid','test']:
             data_dir = os.path.join(dir, tag)
             data_files = [
@@ -123,16 +128,20 @@ class FileLoader(object):
             #     mol2 = data['reactant_mol']
             #     Draw.MolToImage(mol).save('123.png')
             #     Draw.MolToImage(mol2).save('456.png')
-            count = 0
             for file in tqdm(data_files,desc='read pkl'):
                 with open(os.path.join(data_dir,file),'rb') as f :
                     data = pickle.load(f)
                 mol = data['product_mol']
                 bond_labels = data['bond_label']
                 atom_labels = data['atom_label']
-                count = count+1
 
                 edges,graph_label,atom_symbols = self.mol_messages(mol,bond_labels,atom_labels)
+                data['graph_label'] = graph_label
+                data['graph_id'] = count
+
+                count += 1
+                with open(os.path.join(data_dir,file),'wb') as f:
+                    pickle.dump(data,f)
                 if len(edges) == 0 :
                     print(Chem.MolToSmiles(mol))
                     continue
@@ -148,7 +157,6 @@ class FileLoader(object):
                 all_edges.append(edges)
                 all_graph_labels.append(graph_label)
                 all_atom_symbols.append(atom_symbols)
-                break
 
                 #以下是针对symbol组合的
                 # if len(atom_symbols)>1:

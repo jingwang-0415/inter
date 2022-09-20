@@ -104,5 +104,5 @@ norm[torch.isinf(norm)] = 0
 g_dgl.ndata['norm'] = norm.unsqueeze(1)
 print(g_dgl.edges()[0].size())
 
-with open('../data/' + args.data + "/motif", 'wb') as save_file:
+with open('../data/' + args.data + "/motif2", 'wb') as save_file:
     pickle.dump(g_dgl, save_file)

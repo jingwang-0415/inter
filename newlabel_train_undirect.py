@@ -1,4 +1,5 @@
 import argparse
+import random
 
 import numpy as np
 from sklearn.metrics import classification_report
@@ -217,10 +218,43 @@ def test(GAT_model, test_dataloader, data_split='test', save_pred=False,bestacc=
     files.write(sk_report)
     files.flush()
     return acc,atomacc
+def sep_data():
+    train_dir = 'data/%s/train' % (args.dataset)
+    valid_dir = 'data/%s/valid' % (args.dataset)
+    test_dir = 'data/%s/test' % (args.dataset)
+    train_length = len([
+        f for f in os.listdir(train_dir) if f.endswith('.pkl')
+    ])
+    valid_length = len([
+        f for f in os.listdir(valid_dir) if f.endswith('.pkl')
+    ])
+    test_length = len([
+        f for f in os.listdir(test_dir) if f.endswith('.pkl')
+    ])
+    train_idx = [i for i in range(train_length)]
+    valid_idx = [i for i in range(train_length,valid_length+train_length)]
+    test_idx = [i for i in range(train_length+valid_length,test_length+valid_length+train_length)]
+    random.shuffle(train_idx)
+    return train_idx,valid_idx, test_idx
+def load_motif():
+    device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
+    if args.dataset == 'USPTO50K':
+        number_of_graphs = 50016
+    with open('data/' + args.data  +'/motif', 'rb') as input_file:
+        g = pickle.load(input_file)
+    num_cliques = int(g.number_of_nodes()) - number_of_graphs
+    # print(num_cliques)
+    labels = g.ndata['labels']
+    features = g.ndata['feat']
+    in_feats = features.size()[1]
 
+    edge_weight = g.edata['edge_weight'].to(device)
 
+    g = g.to(device)
+    node_features = features.to(device)
+    labels.to(device)
 if __name__ == '__main__':
-
+    sep_data()
     local_acc=0
     batch_size = args.batch_size
     epochs = args.epochs

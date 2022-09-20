@@ -80,7 +80,7 @@ if __name__ == '__main__':
     #     train_data.__getitem__(1)
     #     print(train_data.data_files[:100])
     dir = 'data/USPTO50K/'
-    for data_set in ['trainnewlabel_undirect','validnewlabel_undirect','testnewlabel_undirect']:
+    for data_set in ['train','valid','test']:
         traindata = RetroCenterDatasets(root=dir,data_split=data_set)
         for i in tqdm(range(len(traindata))):
-            traindata.__getitem__(i)
+            rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, y_adj,x_groups,atom_label,bond_label=traindata[485]
