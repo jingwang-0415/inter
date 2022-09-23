@@ -38,3 +38,11 @@ def parse_smilesnomap(smiles_list):
   return parse_lists
 
 
+def GetAtomByid(mol,id):
+    return mol.GetAtomWithIdx(int(id))
+def GetNerghbors(atom):
+    return atom.GetNeighbors()
+def GetAtomMapNum(atom):
+    return atom.GetAtomMapNum()
+def GetAtomSymbol(atom):
+    return atom.GetSymbol()

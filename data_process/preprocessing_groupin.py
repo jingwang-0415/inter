@@ -5,6 +5,7 @@ import os
 import re
 import pickle
 import ChemReload
+from ChemReload import GetAtomByid,GetNerghbors,GetAtomMapNum,GetAtomSymbol
 from rdkit.Chem import ChemicalFeatures
 from rdkit import RDConfig
 from rdkit import Chem
@@ -236,8 +237,30 @@ def get_smarts_pieces(mol, src_adj, target_adj, reacts, add_bond=False):
 
     return ' . '.join(synthons), ' . '.join(reacts)
 
+def smilse_edit(smiles,mapnum):
+    mapnum = [':'+ x for x in mapnum]
+    loc  = [smiles.find(x) for x in mapnum]
+    loc.sort()
+    while int(-1) in loc:
+        loc.remove(-1)
+    begin = loc[0]
+    end = loc[-1]
 
-def over_write_get_smarts_pieces(mol, bond_lables, reacts, add_bond=False):
+    for i in range(begin,-1,-1):
+        if smiles[i] == '[':
+            while smiles[i-1].isdigit() or smiles[i-1] =='(':
+                i -= 1
+            smiles = smiles[:i] + '|' +smiles[i:]
+            break
+
+    for i in range(end,len(smiles)):
+        if smiles[i] == ']':
+            while smiles[i+1].isdigit() or smiles[i+1] ==')':
+                i += 1
+            smiles = smiles[:i+1] + '|' +smiles[i+1:]
+            break
+    return smiles
+def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=False):
     m, n = np.where(bond_lables > 0)
     ids = list(zip(m, n))
 
@@ -247,11 +270,12 @@ def over_write_get_smarts_pieces(mol, bond_lables, reacts, add_bond=False):
         emol.RemoveBond(int(begin),int(end))
 
     synthon_smiles = Chem.MolToSmiles(emol.GetMol(), isomericSmiles=True)
+
     synthons = synthon_smiles.split('.')
     # Find the reactant with maximum common atoms for each synthon
     syn_idx_list = [get_idx(synthon) for synthon in synthons]
     react_idx_list = [get_idx(react) for react in reacts]
-
+    synthons = [smilse_edit(synthon,mapnums) for synthon in synthons ]
     react_max_common_synthon_index = []
     for react_idx in react_idx_list:
         react_common_idx_cnt = []
@@ -263,7 +287,7 @@ def over_write_get_smarts_pieces(mol, bond_lables, reacts, add_bond=False):
         react_max_common_synthon_index.append(react_max_common_index)
     react_synthon_index = np.argsort(react_max_common_synthon_index).tolist()
     reacts = [reacts[k] for k in react_synthon_index]
-
+    reacts = [smilse_edit(react,mapnums) for react in reacts]
     return ' . '.join(synthons), ' . '.join(reacts)
 #常发生断键位置的基团
 def group2id(groups,i,loactions):
@@ -324,12 +348,21 @@ def generate_opennmt_data(save_dir, set_name, data_files):
         product_mol = rxn_data['product_mol']
         product_adj = rxn_data['product_adj']
         target_adj = rxn_data['target_adj']
+        atom_label = rxn_data['atom_label']
         bond_label = rxn_data['bond_label']
         reactant = Chem.MolToSmiles(reactant_mol)
         product = Chem.MolToSmiles(product_mol)
         reactants = reactant.split('.')
-
-        src_item, tgt_item = over_write_get_smarts_pieces(product_mol, bond_label,
+        aids = np.where(atom_label > 0)[0]
+        mapnums = []
+        for i in aids:
+            atom = GetAtomByid(product_mol, i)
+            neighbors = GetNerghbors(atom)
+            local_mapnums = [str(GetAtomMapNum(x)) for x in neighbors]
+            message = str(GetAtomMapNum(atom))
+            mapnums.append(message)
+            mapnums.extend(local_mapnums)
+        src_item, tgt_item = over_write_get_smarts_pieces(product_mol, bond_label,mapnums,
                                                reactants)
         src_data.append([idx, reaction_cls, product, src_item])
         tgt_data.append(tgt_item)
