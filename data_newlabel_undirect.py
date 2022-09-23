@@ -59,6 +59,7 @@ class RetroCenterDatasets(Dataset):
         node_num=x_graph.num_nodes()
         # print(index)
         x_mol = reaction_data['product_mol']
+        smiles = Chem.MolToSmiles(x_mol)
         atoms = x_mol.GetAtoms()
         atoms_num = len(atoms)
         if node_num != atoms_num or node_num != x_atom.shape[0]:
@@ -83,4 +84,4 @@ if __name__ == '__main__':
     for data_set in ['train','valid','test']:
         traindata = RetroCenterDatasets(root=dir,data_split=data_set)
         for i in tqdm(range(len(traindata))):
-            rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, y_adj,x_groups,atom_label,bond_label=traindata[485]
+            rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, y_adj,x_groups,atom_label,bond_label=traindata[0]
