@@ -90,6 +90,7 @@ def test(model, test_dataloader, gat_dataloader, data_split='test', save_pred=Fa
     pre_bond_label = []
     true_atom_label = []
     pre_atom_label = []
+    pred_mol_atom = []
     # Bond disconnection probability
     pred_true_list = []
     pred_logits_mol_list = []
@@ -214,8 +215,21 @@ def test(model, test_dataloader, gat_dataloader, data_split='test', save_pred=Fa
         for j in range(len(atomscope)):
             start = end
             end += atomscope[j]
-            if torch.equal(atom_pred[start:end], atom_labels[start:end]):
+            pred_atom = atom_pred[start:end]
+            true_atom =  atom_labels[start:end]
+            if torch.equal(pred_atom,true_atom):
                 acorrect += 1
+                pred_mol_atom.append([
+                    True,
+                    pred_atom.tolist(),
+                    pred_proab.tolist(),
+                ])
+            else:
+                pred_mol_atom.append([
+                    False,
+                    label_mol.tolist(),
+                    pred_proab.tolist(),
+                ])
     pred_lens_true_list = list(
         map(lambda x, y: x == y, bond_change_gt_list, bond_change_pred_list))
     bond_change_pred_list = list(
@@ -234,7 +248,12 @@ def test(model, test_dataloader, gat_dataloader, data_split='test', save_pred=Fa
                 f.write('{} {}\n'.format(idx, line[0]))
                 f.write(' '.join([str(i) for i in line[1]]) + '\n')
                 f.write(' '.join([str(i) for i in line[2]]) + '\n')
-
+        with open('logs/{}_result_mol_atom_{}.txt'.format(data_split, args.exp_name),
+                  'w') as f:
+            for idx, line in enumerate(pred_mol_atom):
+                f.write('{} {}\n'.format(idx, line[0]))
+                f.write(' '.join([str(i) for i in line[1]]) + '\n')
+                f.write(' '.join([str(i) for i in line[2]]) + '\n')
     print('Bond disconnection number prediction acc: {:.6f}'.format(
         np.mean(pred_lens_true_list)))
 

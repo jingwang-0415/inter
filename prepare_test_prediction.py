@@ -100,7 +100,7 @@ for i in range(len(bond_pred_results)):
     bond_pred_items = bond_pred_results[i].strip().split()
     bond_change_num = int(bond_pred_items[1]) * 2
     bond_change_num_gt = int(bond_pred_items[0]) * 2
-
+    #此时的bondlabel已经换成新的bondalabel 故实际上用的是新标签
     gt_adj_list = pred_results[3 * i + 1].strip().split(' ')
     gt_adj_list = np.array([int(k) for k in gt_adj_list])
     gt_adj_index = np.argsort(-gt_adj_list)

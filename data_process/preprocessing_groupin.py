@@ -1,17 +1,13 @@
 import numpy as np
-import pandas as pd
 import argparse
-import os
-import re
 import pickle
 import ChemReload
-from ChemReload import GetAtomByid,GetNerghbors,GetAtomMapNum,GetAtomSymbol
+from ChemReload import *
 from rdkit.Chem import ChemicalFeatures
 from rdkit import RDConfig
 from rdkit import Chem
 from tqdm import tqdm
 from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit.Chem import Draw
 from datautil import get_reaction_core_atoms
 fdefName = os.path.join(RDConfig.RDDataDir,'BaseFeatures.fdef')
 factory = ChemicalFeatures.BuildFeatureFactory(fdefName)
@@ -188,6 +184,7 @@ def bond_features(bond):
 # Convert smarts to smiles by remove mapping numbers
 def smarts2smiles(smarts, canonical=True):
     t = re.sub(':\d*', '', smarts)
+
     mol = Chem.MolFromSmiles(t, sanitize=False)
     return Chem.MolToSmiles(mol, canonical=canonical)
 
@@ -237,29 +234,16 @@ def get_smarts_pieces(mol, src_adj, target_adj, reacts, add_bond=False):
 
     return ' . '.join(synthons), ' . '.join(reacts)
 
-def smilse_edit(smiles,mapnum):
-    mapnum = [':'+ x for x in mapnum]
-    loc  = [smiles.find(x) for x in mapnum]
-    loc.sort()
-    while int(-1) in loc:
-        loc.remove(-1)
-    begin = loc[0]
-    end = loc[-1]
+def getmap2id(smiles,mapnums):
+    #跳过对成键信息的验证
+    mol = Chem.MolFromSmiles(smiles,sanitize=False)
+    mapnum2id = []
+    for atom in GetMolAtoms(mol):
+        map = GetAtomMapNum(atom)
+        if map in mapnums:
+            mapnum2id.append(GetAtomId(atom))
 
-    for i in range(begin,-1,-1):
-        if smiles[i] == '[':
-            while smiles[i-1].isdigit() or smiles[i-1] =='(':
-                i -= 1
-            smiles = smiles[:i] + '|' +smiles[i:]
-            break
-
-    for i in range(end,len(smiles)):
-        if smiles[i] == ']':
-            while smiles[i+1].isdigit() or smiles[i+1] ==')':
-                i += 1
-            smiles = smiles[:i+1] + '|' +smiles[i+1:]
-            break
-    return smiles
+    return mapnum2id
 def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=False):
     m, n = np.where(bond_lables > 0)
     ids = list(zip(m, n))
@@ -275,7 +259,8 @@ def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=Fals
     # Find the reactant with maximum common atoms for each synthon
     syn_idx_list = [get_idx(synthon) for synthon in synthons]
     react_idx_list = [get_idx(react) for react in reacts]
-    synthons = [smilse_edit(synthon,mapnums) for synthon in synthons ]
+    #
+    synthonsmap2id = [getmap2id(synthon,mapnums) for synthon in synthons ]
     react_max_common_synthon_index = []
     for react_idx in react_idx_list:
         react_common_idx_cnt = []
@@ -287,8 +272,8 @@ def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=Fals
         react_max_common_synthon_index.append(react_max_common_index)
     react_synthon_index = np.argsort(react_max_common_synthon_index).tolist()
     reacts = [reacts[k] for k in react_synthon_index]
-    reacts = [smilse_edit(react,mapnums) for react in reacts]
-    return ' . '.join(synthons), ' . '.join(reacts)
+    reactsmap2id = [getmap2id(react,mapnums) for react in reacts]
+    return ' . '.join(synthons), ' . '.join(reacts),synthonsmap2id,reactsmap2id
 #常发生断键位置的基团
 def group2id(groups,i,loactions):
     for locs in loactions:
@@ -307,23 +292,23 @@ def getScarford(mol):
     return loactions
 def get_Group_features(mol):
     groups=np.zeros([len(mol.GetAtoms()),9])
-    _,locations=ChemReload.LoadPatterns("fr_halogen",mol)
+    _,locations= ChemReload.LoadPatterns("fr_halogen", mol)
     groups=group2id(groups,0,locations)
-    _,locations=ChemReload.LoadPatterns("fr_amide",mol)
+    _,locations= ChemReload.LoadPatterns("fr_amide", mol)
     groups=group2id(groups,1,locations)
-    _,locations=ChemReload.LoadPatterns("fr_ester",mol)
+    _,locations= ChemReload.LoadPatterns("fr_ester", mol)
     groups=group2id(groups,2,locations)
-    _,locations=ChemReload.LoadPatterns("fr_ether",mol)
+    _,locations= ChemReload.LoadPatterns("fr_ether", mol)
     groups=group2id(groups,3,locations)
-    _,locations=ChemReload.LoadPatterns("fr_sulfide",mol)
+    _,locations= ChemReload.LoadPatterns("fr_sulfide", mol)
     groups=group2id(groups,4,locations)
-    _,locations=ChemReload.LoadPatterns("fr_ketone",mol)
+    _,locations= ChemReload.LoadPatterns("fr_ketone", mol)
     groups=group2id(groups,5,locations)
-    _,locations=ChemReload.LoadPatterns("fr_NH0",mol)
+    _,locations= ChemReload.LoadPatterns("fr_NH0", mol)
     groups=group2id(groups,6,locations)
-    _,locations=ChemReload.LoadPatterns("fr_NH1",mol)
+    _,locations= ChemReload.LoadPatterns("fr_NH1", mol)
     groups=group2id(groups,7,locations)
-    _,locations=ChemReload.LoadPatterns("fr_NH2",mol)
+    _,locations= ChemReload.LoadPatterns("fr_NH2", mol)
     groups=group2id(groups,8,locations)
     # loactions=getScarford(mol)
     # groups=scarford2id(groups,9,loactions)
@@ -339,6 +324,8 @@ def generate_opennmt_data(save_dir, set_name, data_files):
 
     src_data = []
     tgt_data = []
+    sys_map2id = []
+    tgt_map2id = []
     for idx, f in tqdm(enumerate(data_files)):
         with open(os.path.join(save_dir, f), 'rb') as f:
             rxn_data = pickle.load(f)
@@ -358,14 +345,16 @@ def generate_opennmt_data(save_dir, set_name, data_files):
         for i in aids:
             atom = GetAtomByid(product_mol, i)
             neighbors = GetNerghbors(atom)
-            local_mapnums = [str(GetAtomMapNum(x)) for x in neighbors]
-            message = str(GetAtomMapNum(atom))
+            local_mapnums = [GetAtomMapNum(x) for x in neighbors]
+            message =GetAtomMapNum(atom)
             mapnums.append(message)
             mapnums.extend(local_mapnums)
-        src_item, tgt_item = over_write_get_smarts_pieces(product_mol, bond_label,mapnums,
+        src_item, tgt_item, synthonsmap2id,reactantsmap2id= over_write_get_smarts_pieces(product_mol, bond_label,mapnums,
                                                reactants)
         src_data.append([idx, reaction_cls, product, src_item])
         tgt_data.append(tgt_item)
+        sys_map2id.append(synthonsmap2id)
+
 
     print('size', len(src_data))
 
@@ -380,7 +369,11 @@ def generate_opennmt_data(save_dir, set_name, data_files):
             os.path.join('../opennmt_data', 'tgt-{}.txt'.format(set_name)), 'w') as f:
         for tgt in tgt_data:
             f.write('{}\n'.format(tgt))
-
+    with open(os.path.join('../opennmt_data', 'sysmap2id-{}.txt'.format(set_name)), 'w') as f:
+        for sys in sys_map2id:
+            for i in range(len(sys)):
+                f.write('{}\t'.format(sys[i]))
+            f.write('\n')
 def preprocess(save_dir, reactants, products,smiles, reaction_types=None,):
     """
     preprocess reaction data to extract graph adjacency matrix and features
@@ -450,7 +443,7 @@ def preprocess(save_dir, reactants, products,smiles, reaction_types=None,):
                   'wb') as f:
             pickle.dump(rxn_data, f)
 def unique_products(lists):
-    alists=ChemReload.parse_smilesnomap(lists)
+    alists= ChemReload.parse_smilesnomap(lists)
     products={}
     same={}
     sameproducts=set()

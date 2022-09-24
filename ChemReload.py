@@ -46,3 +46,9 @@ def GetAtomMapNum(atom):
     return atom.GetAtomMapNum()
 def GetAtomSymbol(atom):
     return atom.GetSymbol()
+def GetMolAtoms(mol):
+    return mol.GetAtoms()
+def GetAtomId(atom):
+    return atom.GetIdx()
+def SetAtomMapnum(atom,num):
+    return atom.SetAtomMapNum(num)
