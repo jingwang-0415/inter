@@ -51,10 +51,12 @@ sys = {
 }
 
 # Get the mapping numbers in a SMILES.
-def get_idx(smarts):
-    item = re.findall('(?<=:)\d+', smarts)
-    item = list(map(int, item))
-    return item
+# def get_idx(smarts):
+#     item = re.findall('[a-z]|[A-Z]', smarts)
+#     while 'H' in item:
+#         item.remove('H')
+#     #item = list(map(int, item))
+#     return item
 
 def smi_tokenizer(smi):
     pattern =  "(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9]|\|)"
@@ -69,14 +71,47 @@ def smarts2smiles(smarts, canonical=True):
     mol = Chem.MolFromSmiles(t, sanitize=False)
     return Chem.MolToSmiles(mol, canonical=canonical)
 def smiles_edit(smiles, ids,canonical=True):
-    mol = Chem.MolFromSmiles(smiles,canonical=canonical)
+    mol = Chem.MolFromSmiles(smiles,sanitize=False)
+    maps = []
     for id in ids :
         atom = GetAtomByid(mol,id)
+        SetAtomMapnum(atom,id+1)
 
+        maps.append(':'+str(id+1))
+    smiles = Chem.MolToSmiles(mol,canonical=True)
+    loc = [smiles.find(x) for x in maps]
+
+    loc.sort()
+    begin = loc[0]
+    end = loc[-1]
+
+    for i in range(begin,-1,-1):
+        if smiles[i] == '[':
+            while smiles[i-1].isdigit() or smiles[i-1] =='(':
+                i -= 1
+            smiles = smiles[:i] + '|' +smiles[i:]
+            break
+
+    for i in range(end,len(smiles)):
+        if smiles[i] == ']':
+            while i<len(smiles)-1 and (smiles[i+1].isdigit() or smiles[i+1] ==')'):
+                i += 1
+            smiles = smiles[:i+1] + '|' +smiles[i+1:]
+            break
+    smiles = re.sub(':\d*','',smiles)
+
+    return smiles
 def read_mapnums(ids_list):
     ids = ids_list.split('\t')
-
-    return ids
+    new_ids = []
+    for id in ids:
+        if id == '\n':
+            continue
+        id = id.replace(']','')
+        id = id.replace('[','')
+        id_list = [int(x) for x in id.split(',')]
+        new_ids.append(id_list)
+    return new_ids
 
 
 tokens = Counter()
@@ -101,17 +136,23 @@ for data_set in ['valid', 'train', 'test']:
         src_items[2] = smi_tokenizer(smarts2smiles(src_items[2]))
         tokens.update(src_items[2].split(' '))
         id_list = read_mapnums(maps)
+        count = 4
         for idx in range(4, len(src_items)):
             if src_items[idx] == '.':
+                count += 1
                 continue
             smiles = smarts2smiles(src_items[idx], canonical=False)
-            smiles = smiles_edit(smiles,id_list[idx-4],canonical=False)
-            src_items[idx] = smi_tokenizer()
+            smiles = smiles_edit(smiles,id_list[idx-count],canonical=False)
+            src_items[idx] = smi_tokenizer(smiles)
             tokens.update(src_items[idx].split(' '))
+        count = 0
         for idx in range(len(tgt_items)):
             if tgt_items[idx] == '.':
+                count += 1
                 continue
-            tgt_items[idx] = smi_tokenizer(smarts2smiles(tgt_items[idx]))
+            smiles = smarts2smiles(tgt_items[idx])
+            smiles = smiles_edit(smiles,id_list[idx-count])
+            tgt_items[idx] = smi_tokenizer(smiles)
             tokens.update(tgt_items[idx].split(' '))
 
         if not args.typed:

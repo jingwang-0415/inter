@@ -87,6 +87,7 @@ for data_file in tqdm(reaction_data_files):
     product_mols.append(reaction_data['product_mol'])
     product_smiles.append(Chem.MolToSmiles(reaction_data['product_mol'], canonical=False))
 
+
 assert len(product_smiles) == len(bond_pred_results)
 
 
