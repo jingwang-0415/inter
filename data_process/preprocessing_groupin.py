@@ -244,7 +244,7 @@ def getmap2id(smiles,mapnums):
             mapnum2id.append(GetAtomId(atom))
 
     return mapnum2id
-def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=False):
+def over_write_get_smarts_pieces(mol, bond_lables, reacts, add_bond=False):
     m, n = np.where(bond_lables > 0)
     ids = list(zip(m, n))
 
@@ -254,13 +254,11 @@ def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=Fals
         emol.RemoveBond(int(begin),int(end))
 
     synthon_smiles = Chem.MolToSmiles(emol.GetMol(), isomericSmiles=True)
-
     synthons = synthon_smiles.split('.')
     # Find the reactant with maximum common atoms for each synthon
     syn_idx_list = [get_idx(synthon) for synthon in synthons]
     react_idx_list = [get_idx(react) for react in reacts]
-    #
-    synthonsmap2id = [getmap2id(synthon,mapnums) for synthon in synthons ]
+
     react_max_common_synthon_index = []
     for react_idx in react_idx_list:
         react_common_idx_cnt = []
@@ -272,8 +270,9 @@ def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=Fals
         react_max_common_synthon_index.append(react_max_common_index)
     react_synthon_index = np.argsort(react_max_common_synthon_index).tolist()
     reacts = [reacts[k] for k in react_synthon_index]
-    reactsmap2id = [getmap2id(react,mapnums) for react in reacts]
-    return ' . '.join(synthons), ' . '.join(reacts),synthonsmap2id,reactsmap2id
+
+    return ' . '.join(synthons), ' . '.join(reacts)
+
 #常发生断键位置的基团
 def group2id(groups,i,loactions):
     for locs in loactions:
@@ -335,25 +334,14 @@ def generate_opennmt_data(save_dir, set_name, data_files):
         product_mol = rxn_data['product_mol']
         product_adj = rxn_data['product_adj']
         target_adj = rxn_data['target_adj']
-        atom_label = rxn_data['atom_label']
         bond_label = rxn_data['bond_label']
         reactant = Chem.MolToSmiles(reactant_mol)
         product = Chem.MolToSmiles(product_mol)
         reactants = reactant.split('.')
-        aids = np.where(atom_label > 0)[0]
-        mapnums = []
-        for i in aids:
-            atom = GetAtomByid(product_mol, i)
-            neighbors = GetNerghbors(atom)
-            local_mapnums = [GetAtomMapNum(x) for x in neighbors]
-            message =GetAtomMapNum(atom)
-            mapnums.append(message)
-            mapnums.extend(local_mapnums)
-        src_item, tgt_item, synthonsmap2id,reactantsmap2id= over_write_get_smarts_pieces(product_mol, bond_label,mapnums,
+        src_item, tgt_item = over_write_get_smarts_pieces(product_mol, bond_label,
                                                reactants)
         src_data.append([idx, reaction_cls, product, src_item])
         tgt_data.append(tgt_item)
-        sys_map2id.append(synthonsmap2id)
 
 
     print('size', len(src_data))
@@ -369,11 +357,11 @@ def generate_opennmt_data(save_dir, set_name, data_files):
             os.path.join('../opennmt_data', 'tgt-{}.txt'.format(set_name)), 'w') as f:
         for tgt in tgt_data:
             f.write('{}\n'.format(tgt))
-    with open(os.path.join('../opennmt_data', 'sysmap2id-{}.txt'.format(set_name)), 'w') as f:
-        for sys in sys_map2id:
-            for i in range(len(sys)):
-                f.write('{}\t'.format(sys[i]))
-            f.write('\n')
+    # with open(os.path.join('../opennmt_data', 'sysmap2id-{}.txt'.format(set_name)), 'w') as f:
+    #     for sys in sys_map2id:
+    #         for i in range(len(sys)):
+    #             f.write('{}\t'.format(sys[i]))
+    #         f.write('\n')
 def preprocess(save_dir, reactants, products,smiles, reaction_types=None,):
     """
     preprocess reaction data to extract graph adjacency matrix and features
