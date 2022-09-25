@@ -2,13 +2,13 @@ import numpy as np
 import argparse
 import pickle
 import ChemReload
-from ChemReload import *
+from ChemReload import GetAtomSymbol,GetAtomMapNum,GetAtomId,GetAtomByid,GetMolAtoms,GetNerghbors
 from rdkit.Chem import ChemicalFeatures
 from rdkit import RDConfig
 from rdkit import Chem
 from tqdm import tqdm
 from rdkit.Chem.Scaffolds import MurckoScaffold
-from datautil import get_reaction_core_atoms
+from data_process.datautil import get_reaction_core_atoms
 fdefName = os.path.join(RDConfig.RDDataDir,'BaseFeatures.fdef')
 factory = ChemicalFeatures.BuildFeatureFactory(fdefName)
 parser = argparse.ArgumentParser()
@@ -242,7 +242,8 @@ def getmap2id(smiles,mapnums):
         map = GetAtomMapNum(atom)
         if map in mapnums:
             mapnum2id.append(GetAtomId(atom))
-
+    if len(mapnum2id) == 0:
+        mapnum2id.append(-1)
     return mapnum2id
 def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=False):
     m, n = np.where(bond_lables > 0)
@@ -273,6 +274,7 @@ def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=Fals
     react_synthon_index = np.argsort(react_max_common_synthon_index).tolist()
     reacts = [reacts[k] for k in react_synthon_index]
     reactsmap2id = [getmap2id(react,mapnums) for react in reacts]
+
     return ' . '.join(synthons), ' . '.join(reacts),synthonsmap2id,reactsmap2id
 #常发生断键位置的基团
 def group2id(groups,i,loactions):
@@ -354,7 +356,7 @@ def generate_opennmt_data(save_dir, set_name, data_files):
         src_data.append([idx, reaction_cls, product, src_item])
         tgt_data.append(tgt_item)
         sys_map2id.append(synthonsmap2id)
-
+        tgt_map2id.append(reactantsmap2id)
 
     print('size', len(src_data))
 
@@ -373,6 +375,11 @@ def generate_opennmt_data(save_dir, set_name, data_files):
         for sys in sys_map2id:
             for i in range(len(sys)):
                 f.write('{}\t'.format(sys[i]))
+            f.write('\n')
+    with open(os.path.join('../opennmt_data', 'tgtmap2id-{}.txt'.format(set_name)), 'w') as f:
+        for tgt in tgt_map2id:
+            for i in range(len(tgt)):
+                f.write('{}\t'.format(tgt[i]))
             f.write('\n')
 def preprocess(save_dir, reactants, products,smiles, reaction_types=None,):
     """
@@ -488,7 +495,7 @@ if __name__ == '__main__':
     #         reaction_list,
     #         reaction_class_list,
     #     )
-    for data_set in ['test', 'valid', 'train']:
+    for data_set in ['train','test', 'valid' ]:
          save_dir = os.path.join(savedir, data_set)
          data_files = [f for f in os.listdir(save_dir) if f.endswith('.pkl')]
          data_files.sort()
@@ -499,10 +506,17 @@ if __name__ == '__main__':
          targets = [l.strip() for l in f.readlines()]
     with open(os.path.join('../opennmt_data', 'src-train.txt'), 'r') as f:
          sources = [l.strip() for l in f.readlines()]
+    with open(os.path.join('../opennmt_data', 'tgtmap2id-train.txt'), 'r') as f:
+         tgtmap = [l.strip() for l in f.readlines()]
+    with open(os.path.join('../opennmt_data', 'sysmap2id-train.txt'), 'r') as f:
+         srcmap = [l.strip() for l in f.readlines()]
     sources_new, targets_new = [], []
-    for src, tgt in zip(sources, targets):
+    srcmap2id_new , targetsmap2id_new =[],[]
+    for src, tgt,s,t in zip(sources, targets,srcmap,tgtmap):
          sources_new.append(src)
          targets_new.append(tgt)
+         srcmap2id_new.append(s)
+         targetsmap2id_new.append(t)
          src_produdct, src_synthon = src.split('[PREDICT]')
          synthons = src_synthon.strip().split('.')
          reactants = tgt.split('.')
@@ -510,11 +524,23 @@ if __name__ == '__main__':
              continue
          synthons.reverse()
          reactants.reverse()
+         smaps = s.split('\t')
+         tmaps = t.split('\t')
+         smaps.reverse()
+         tmaps.reverse()
          sources_new.append(src_produdct + ' [PREDICT] ' + ' . '.join(synthons))
          targets_new.append(' . '.join(reactants))
+         srcmap2id_new.append('\t'.join(smaps))
+         targetsmap2id_new.append('\t'.join(tmaps))
     with open(os.path.join('../opennmt_data', 'tgt-train-aug.txt'), 'w') as f:
          for tgt in targets_new:
              f.write(tgt.strip() + '\n')
     with open(os.path.join('../opennmt_data', 'src-train-aug.txt'), 'w') as f:
          for src in sources_new:
              f.write(src.strip() + '\n')
+    with open(os.path.join('../opennmt_data', 'tgtmap2id-train-aug.txt'), 'w') as f:
+         for t in targetsmap2id_new:
+             f.write(t.strip() + '\n')
+    with open(os.path.join('../opennmt_data', 'sysmap2id-train-aug.txt'), 'w') as f:
+         for s in srcmap2id_new:
+             f.write(s.strip() + '\n')

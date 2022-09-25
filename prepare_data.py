@@ -45,9 +45,14 @@ tgt = {
     'valid': 'tgt-valid.txt',
 }
 sys = {
-    'train': 'sysmap2id-train.txt',
+    'train': 'sysmap2id-train-aug.txt',
     'test': 'sysmap2id-test.txt',
     'valid': 'sysmap2id-valid.txt',
+}
+tm = {
+    'train': 'tgtmap2id-train-aug.txt',
+    'test': 'tgtmap2id-test.txt',
+    'valid': 'tgtmap2id-valid.txt',
 }
 
 # Get the mapping numbers in a SMILES.
@@ -74,6 +79,8 @@ def smiles_edit(smiles, ids,canonical=True):
     mol = Chem.MolFromSmiles(smiles,sanitize=False)
     maps = []
     for id in ids :
+        if id == -1:
+            return smiles
         atom = GetAtomByid(mol,id)
         SetAtomMapnum(atom,id+1)
 
@@ -124,25 +131,30 @@ for data_set in ['valid', 'train', 'test']:
         tgts = f.readlines()
     with open(os.path.join('opennmt_data', sys[data_set])) as f:
         sys_ = f.readlines()
+    with open(os.path.join('opennmt_data', tm[data_set])) as f:
+        tm_ = f.readlines()
 
     src_lines = []
     tgt_lines = []
     sys_lines = []
     reaction_atoms_lists = []
     unknown = set()
-    for s, t ,maps in tqdm(list(zip(srcs, tgts,sys_))):
+    for s, t ,maps,tmaps in tqdm(list(zip(srcs, tgts,sys_,tm_))):
         tgt_items = t.strip().split()
         src_items = s.strip().split()
         src_items[2] = smi_tokenizer(smarts2smiles(src_items[2]))
         tokens.update(src_items[2].split(' '))
-        id_list = read_mapnums(maps)
+        sid_list = read_mapnums(maps)
+        tid_list = read_mapnums(tmaps)
         count = 4
         for idx in range(4, len(src_items)):
             if src_items[idx] == '.':
                 count += 1
                 continue
             smiles = smarts2smiles(src_items[idx], canonical=False)
-            smiles = smiles_edit(smiles,id_list[idx-count],canonical=False)
+            if idx-count>=len(sid_list):
+                a=1
+            smiles = smiles_edit(smiles,sid_list[idx-count],canonical=False)
             src_items[idx] = smi_tokenizer(smiles)
             tokens.update(src_items[idx].split(' '))
         count = 0
@@ -151,7 +163,7 @@ for data_set in ['valid', 'train', 'test']:
                 count += 1
                 continue
             smiles = smarts2smiles(tgt_items[idx])
-            smiles = smiles_edit(smiles,id_list[idx-count])
+            smiles = smiles_edit(smiles,tid_list[idx-count])
             tgt_items[idx] = smi_tokenizer(smiles)
             tokens.update(tgt_items[idx].split(' '))
 

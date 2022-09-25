@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 from rdkit import Chem
 from collections import Counter
-
+from ChemReload import *
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset',
                     type=str,
@@ -37,7 +37,7 @@ def get_idx(smarts):
     return item
 
 def smi_tokenizer(smi):
-    pattern =  "(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
+    pattern =  "(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9]|\|)"
     regex = re.compile(pattern)
     tokens = [token for token in regex.findall(smi)]
     assert smi == ''.join(tokens)
@@ -62,6 +62,61 @@ def get_smarts_pieces(mol, src_adj, target_adj, add_bond=False):
                 emol.AddBond(j, k, Chem.rdchem.BondType.SINGLE)
     synthon_smiles = Chem.MolToSmiles(emol.GetMol(), isomericSmiles=True)
     return synthon_smiles
+def getid2map(mol,atom_label):
+    aids = np.where(atom_label > 0)[0]
+    mapnums = []
+    for i in aids:
+        atom = GetAtomByid(mol, i)
+        neighbors = GetNerghbors(atom)
+        local_mapnums = [GetAtomMapNum(x) for x in neighbors]
+        message = GetAtomMapNum(atom)
+        mapnums.append(message)
+        mapnums.extend(local_mapnums)
+    return mapnums
+def getmap2id(smiles,mapnums):
+    #跳过对成键信息的验证
+    mol = Chem.MolFromSmiles(smiles,sanitize=False)
+    mapnum2id = []
+    for atom in GetMolAtoms(mol):
+        map = GetAtomMapNum(atom)
+        if map in mapnums:
+            mapnum2id.append(GetAtomId(atom))
+    if len(mapnum2id) == 0:
+        mapnum2id.append(-1)
+    return mapnum2id
+def smiles_edit(smiles, ids,canonical=True):
+    mol = Chem.MolFromSmiles(smiles,sanitize=False)
+    maps = []
+    for id in ids :
+        if id == -1:
+            return smiles
+        atom = GetAtomByid(mol,id)
+        SetAtomMapnum(atom,id+1)
+
+        maps.append(':'+str(id+1))
+    smiles = Chem.MolToSmiles(mol,canonical=True)
+    loc = [smiles.find(x) for x in maps]
+
+    loc.sort()
+    begin = loc[0]
+    end = loc[-1]
+
+    for i in range(begin,-1,-1):
+        if smiles[i] == '[':
+            while smiles[i-1].isdigit() or smiles[i-1] =='(':
+                i -= 1
+            smiles = smiles[:i] + '|' +smiles[i:]
+            break
+
+    for i in range(end,len(smiles)):
+        if smiles[i] == ']':
+            while i<len(smiles)-1 and (smiles[i+1].isdigit() or smiles[i+1] ==')'):
+                i += 1
+            smiles = smiles[:i+1] + '|' +smiles[i+1:]
+            break
+    smiles = re.sub(':\d*','',smiles)
+
+    return smiles
 
 
 
@@ -80,12 +135,14 @@ reaction_data_files.sort()
 product_adjs = []
 product_mols = []
 product_smiles = []
+atom_labels = []
 for data_file in tqdm(reaction_data_files):
     with open(os.path.join(dataset_dir, data_file), 'rb') as f:
         reaction_data = pickle.load(f)
     product_adjs.append(reaction_data['product_adj'])
     product_mols.append(reaction_data['product_mol'])
     product_smiles.append(Chem.MolToSmiles(reaction_data['product_mol'], canonical=False))
+    atom_labels.append(reaction_data['atom_label'])
 
 
 assert len(product_smiles) == len(bond_pred_results)
@@ -149,6 +206,9 @@ for i, prod_adj in enumerate(product_adjs):
     reactants = [r.strip() for r in reactants]
 
     syn_idx_list = [get_idx(s) for s in pred_synthon.split('.')]
+    mapnum_list = [getid2map(product_mols[i],atom_labels[i])]
+    id_list_s = [getmap2id(s,mapnum_list) for s in pred_synthon.split('.')]
+
     react_idx_list = [get_idx(r) for r in reactants]
     react_max_common_synthon_index = []
     for react_idx in react_idx_list:
@@ -161,17 +221,19 @@ for i, prod_adj in enumerate(product_adjs):
         react_max_common_synthon_index.append(react_max_common_index)
     react_synthon_index = np.argsort(react_max_common_synthon_index).tolist()
     reactants = [reactants[k] for k in react_synthon_index]
+    id_list_r = [getmap2id(s,mapnum_list) for s in reactants]
 
     # remove mapping number
     syns = pred_synthon.split('.')
     syns = [smarts2smiles(s, canonical=False) for s in syns]
+    syns = [smiles_edit(s,id,canonical=False) for s,id in zip(syns,id_list_s)]
     syns = [smi_tokenizer(s) for s in syns]
     src_items = srcs[i].strip().split(' ')
     src_items[2] = smi_tokenizer(smarts2smiles(src_items[2]))
     if args.typed == 'untyped':
         src_items[1] = '[RXN_0]'
     src_line = ' '.join(src_items[1:4]) + ' ' + ' . '.join(syns) + '\n'
-
+    reactants = [smiles_edit(r,id) for r,id in zip(reactants,id_list_r)]
     reactants = [smi_tokenizer(smarts2smiles(r)) for r in reactants]
     tgt_line = ' . '.join(reactants) + '\n'
 
