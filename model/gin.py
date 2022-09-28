@@ -163,18 +163,33 @@ class TwoGIN(nn.Module):
         self.gin = StochasticGIN(num_layers, num_mlp_layers, input_dim, hidden_dim,
                  output_dim, final_dropout, learn_eps,
                  neighbor_pooling_type).to(self.device)
+        self.gin_att = nn.Sequential(
+            nn.Linear(gat_hidden_dim+hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim,1),
+            nn.LeakyReLU(),
+            nn.Softmax()
+        )
+        self.gat_att = nn.Sequential(
+            nn.Linear(gat_hidden_dim+hidden_dim, gat_hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(gat_hidden_dim,1),
+            nn.LeakyReLU(),
+            nn.Softmax()
+
+        )
         self.gat = GATNet(in_dim,gat_hidden_dim,gat_num_layers,heads,use_gpu).to(self.device)
         self.linear_e = nn.Sequential(
-            nn.Linear(128 * 2+16, 128),
+            nn.Linear(gat_hidden_dim * 2+hidden_dim, gat_hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(0.2),
-            nn.Linear(128, 32),
+            nn.Linear(gat_hidden_dim, 32),
             nn.ReLU(inplace=True),
             nn.Linear(32, 3),
         )
         self.linear_atom = nn.Sequential(
-            nn.Linear(128*2+16, 32),
-            nn.ReLU(inplace=True),
+            nn.Linear(gat_hidden_dim*2+hidden_dim, 32),
+             nn.ReLU(inplace=True),
             nn.Dropout(0.2),
             nn.Linear(32, 2),
         )
@@ -183,10 +198,15 @@ class TwoGIN(nn.Module):
 
     def forward(self, g, h, edge_weight, graph, graph_h):
         #pre_h = self.graphcnn(graph)
-        h = self.gin(g, h, edge_weight)
+        gin_h = self.gin(g, h, edge_weight)
         g,pre_h, h_readout,e = self.gat(graph,graph_h)
 
-        h = torch.cat((h,h_readout),1)
+        h_fused = torch.cat((gin_h, h_readout), 1)
+        h_att = self.gin_att(h_fused)
+        h_readout_att = self.gat_att(h_fused)
+        gin_h = h_att*gin_h
+        h_readout=h_readout_att*h_readout
+        h = torch.cat((gin_h, h_readout), 1)
         eh = dgl.broadcast_edges(g,h)
         ah = dgl.broadcast_nodes(g,h)
         a_fused = torch.cat((pre_h,ah),1)
