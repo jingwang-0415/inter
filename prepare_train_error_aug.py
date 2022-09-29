@@ -93,7 +93,7 @@ def smiles_edit(smiles, ids,canonical=True):
         atom = GetAtomByid(mol,id)
         SetAtomMapnum(atom,id+1)
 
-        maps.append(':'+str(id+1))
+        maps.append(':'+str(id+1)+']')
     smiles = Chem.MolToSmiles(mol,canonical=True)
     loc = [smiles.find(x) for x in maps]
 
@@ -105,18 +105,30 @@ def smiles_edit(smiles, ids,canonical=True):
         if smiles[i] == '[':
             while smiles[i-1].isdigit() or smiles[i-1] =='(':
                 i -= 1
-            smiles = smiles[:i] + '|' +smiles[i:]
+            new_smiles = smiles[:i] + '|' +smiles[i:]
             break
 
-    for i in range(end,len(smiles)):
-        if smiles[i] == ']':
-            while i<len(smiles)-1 and (smiles[i+1].isdigit() or smiles[i+1] ==')'):
+    for i in range(end,len(new_smiles)):
+        if new_smiles[i] == ']':
+            while i<len(new_smiles)-1 and (new_smiles[i+1].isdigit() or new_smiles[i+1] ==')'):
                 i += 1
-            smiles = smiles[:i+1] + '|' +smiles[i+1:]
+            new_smiles = new_smiles[:i+1] + '|' +new_smiles[i+1:]
             break
-    smiles = re.sub(':\d*','',smiles)
+    new_smiles = re.sub(':\d*','',new_smiles)
+    abs = re.findall('\|\[[^\]]]',new_smiles)
+    assert len(abs) <= 1
+    for i in abs:
+        a = re.split('\[|\]',i)
+        item = a[0]+a[1]
+        new_smiles = re.sub('\|\[[^\]]]',item,new_smiles)
+    abs = re.findall('\[[^\]]]\||\[[^\]]]\d\|',new_smiles)
 
-    return smiles
+    assert len(abs) <= 1
+    for i in abs:
+        a = re.split('\[|\]', i)
+        item = a[1] + a[2]
+        new_smiles = re.sub('\[[^\]]]\||\[[^\]]]\d\|', item, new_smiles)
+    return new_smiles
 
 
 
