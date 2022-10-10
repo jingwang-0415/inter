@@ -1,5 +1,5 @@
 import os.path
-
+from ChemReload import *
 import numpy as np
 import rdkit
 from rdkit.Chem import Draw
@@ -28,19 +28,26 @@ class FileLoader(object):
         have_visted = {}
         indices = np.where(adj == 1)
         indices = list(zip(indices[0],indices[1]))
+
         for indice in indices:
             begin , end = indice
             if (begin,end) not in have_visted and (end,begin) not in have_visted:
                 have_visted[(begin,end)] = 1
+                bt = GetBondTypeAsDouble(GetBond(mol,begin,end))
+
+                edge_labels.append(bt)
                 # beginsymbol= mol.GetAtomWithIdx(int(begin)).GetSymbol()
                 # endsymbol = mol.GetAtomWithIdx(int(end)).GetSymbol()
                 edges.append(((begin ,end)))
                 # edge_labels.append(label[begin][end])
                 atom_symbol[begin] = atom_label[begin]
                 atom_symbol[end] = atom_label[end]
+                # atom_symbol[begin] = GetAtomSymbol(GetAtomByid(mol,begin))
+                # atom_symbol[end] = GetAtomSymbol(GetAtomByid(mol,end))
         graph_label = np.where(bond_label>0)[0]
         if len(edges) == 0:
             edges.append((0,0))
+            edge_labels.append(0)
             atom_symbol[0] = atom_label[0]
             print(Chem.MolToSmiles(mol))
         if graph_label.size == 0:
@@ -107,13 +114,14 @@ class FileLoader(object):
 
 
 
-        return edges,graph_label,atom_symbol
+        return edges,edge_labels,graph_label,atom_symbol
     def load_data(self):
         dataname = self.args.data
-        dir = '../data/%s/' % (dataname)
+        dir = './data/%s/' % (dataname)
         all_edges = []
         all_graph_labels= []
         all_edge_weights = []
+        all_edge_labels = []
         all_atom_symbols = []
         count = 0
         for tag in ['train','valid','test']:
@@ -135,7 +143,7 @@ class FileLoader(object):
                 bond_labels = data['bond_label']
                 atom_labels = data['atom_label']
 
-                edges,graph_label,atom_symbols = self.mol_messages(mol,bond_labels,atom_labels)
+                edges,edge_labels,graph_label,atom_symbols = self.mol_messages(mol,bond_labels,atom_labels)
                 data['graph_label'] = graph_label
                 data['graph_id'] = count
 
@@ -157,7 +165,7 @@ class FileLoader(object):
                 all_edges.append(edges)
                 all_graph_labels.append(graph_label)
                 all_atom_symbols.append(atom_symbols)
-
+                all_edge_labels.append(edge_labels)
                 #以下是针对symbol组合的
                 # if len(atom_symbols)>1:
                 #     c=atom_symbols

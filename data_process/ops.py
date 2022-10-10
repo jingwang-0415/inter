@@ -179,7 +179,7 @@ class GenGraph(object):
             for e in c_list:
                 if e not in self.node_count:
                     self.node_count[e] = 1
-                else:
+                elif g<self.train_length:
                     self.node_count[e] += 1
 
             for e in c_list:
@@ -262,10 +262,11 @@ class GenGraph(object):
     def update_weight(self, g):
         for (u, v) in g.edges():
             if u < len(self.data.g_list):
-                g[u][v]['weight'] = g[u][v]['weight'] * (math.log((len(self.data.g_list) + 1) / self.node_count[v - len(self.data.g_list)]))
+                a = g[u][v]
+                g[u][v]['weight'] = g[u][v]['weight'] * (math.log((self.train_length + 1) / self.node_count[v - len(self.data.g_list)]))
             else:
                 g[u][v]['weight'] = g[u][v]['weight'] * (
-                    math.log((len(self.data.g_list) + 1) / self.node_count[u - len(self.data.g_list)]))
+                    math.log((self.train_length + 1) / self.node_count[u -len(self.data.g_list)]))
         return g
 
     def add_edge(self, g):
@@ -304,7 +305,7 @@ class GenGraph(object):
 
     @staticmethod
     def shift_right(l):
-        if type(l) == int:
+        if type(l) == int or type(l) == float:
             return l
         elif type(l) == tuple:
             l = list(l)

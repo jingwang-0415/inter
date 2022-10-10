@@ -39,7 +39,7 @@ data = FileLoader(args).load_data()
 count1 = Counter(data.graph_labels)
 #count2 = Counter(data.node_labels)
 print(count1)
-dir = '../data/%s/train' % (args.data)
+dir = './data/%s/train' % (args.data)
 train_length= len([
     f for f in os.listdir(dir) if f.endswith('.pkl')
 ])
@@ -104,5 +104,5 @@ norm[torch.isinf(norm)] = 0
 g_dgl.ndata['norm'] = norm.unsqueeze(1)
 print(g_dgl.edges()[0].size())
 
-with open('../data/' + args.data + "/motif2", 'wb') as save_file:
+with open('./data/' + args.data + "/motif22", 'wb') as save_file:
     pickle.dump(g_dgl, save_file)
