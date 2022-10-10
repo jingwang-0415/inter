@@ -45,7 +45,7 @@ parser.add_argument('--valid_only',
                     help='valid_only')
 parser.add_argument('--test_only',
                     action='store_true',
-                    default=True,
+                    default=False,
                     help='test_only')
 parser.add_argument('--test_on_train',
                     action='store_true',
@@ -64,7 +64,7 @@ parser.add_argument('--load',
                     default=False,
                     help='load model checkpoint.')
 
-parser.add_argument('-h_dim', type=int, default=16, help='hidden dim')
+parser.add_argument('-h_dim', type=int, default=64, help='hidden dim')
 parser.add_argument('-drop_n', type=float, default=0.2, help='drop net')
 parser.add_argument('-drop_c', type=float, default=0.2, help='drop output')
 parser.add_argument(
@@ -169,7 +169,7 @@ def test(model, test_dataloader, gat_dataloader, data_split='test', save_pred=Fa
             bond_labels = bond_labels.cuda()
         g_dgl = dgl.batch(x_graph)
 
-        atom_pred, e_pred = gin(blocks, batch_inputs, batch_edge_weight, g_dgl, x_atom)
+        atom_pred, e_pred,num_pre = model(blocks, batch_inputs, batch_edge_weight, g_dgl, x_atom)
 
         e_pred = e_pred.squeeze()
         loss_h = nn.CrossEntropyLoss(reduction='sum')(atom_pred,
@@ -221,14 +221,14 @@ def test(model, test_dataloader, gat_dataloader, data_split='test', save_pred=Fa
                 acorrect += 1
                 pred_mol_atom.append([
                     True,
+                    true_atom.tolist(),
                     pred_atom.tolist(),
-                    pred_proab.tolist(),
                 ])
             else:
                 pred_mol_atom.append([
                     False,
-                    label_mol.tolist(),
-                    pred_proab.tolist(),
+                    true_atom.tolist(),
+                    pred_atom.tolist(),
                 ])
     pred_lens_true_list = list(
         map(lambda x, y: x == y, bond_change_gt_list, bond_change_pred_list))
@@ -267,7 +267,7 @@ def test(model, test_dataloader, gat_dataloader, data_split='test', save_pred=Fa
             torch.save(model.state_dict(),
                        'checkpoints_3/{}best_checkpoint.pt'.format(args.exp_name))
     print('Bond disconnection acc (without auxiliary task): {:.6f}'.format(acc))
-    print('atom  TAcc: {:.5f}'.format(atomacc))
+    print('atom  disconnection acc : {:.5f}'.format(atomacc))
     sk_report = classification_report(true_bond_label, pre_bond_label)
     files.write("\n" + data_split + " bond result" + "\n")
     files.write(sk_report)
@@ -295,8 +295,7 @@ def sep_data():
     train_idx = [i for i in range(train_length)]
     valid_idx = [i for i in range(train_length, valid_length + train_length)]
     test_idx = [i for i in range(train_length + valid_length, test_length + valid_length + train_length)]
-    if not args.test_on_train:
-        random.shuffle(train_idx)
+
     return train_idx, valid_idx, test_idx
 
 
@@ -308,7 +307,7 @@ def load_motif(train_idx, valid_idx, test_idx):
         device = 'cuda:0'
     if args.dataset == 'USPTO50K':
         number_of_graphs = 50016
-    with open('data/' + args.dataset + '/motif2', 'rb') as input_file:
+    with open('data/' + args.dataset + '/motif_sybol', 'rb') as input_file:
         g = pickle.load(input_file)
     num_cliques = int(g.number_of_nodes()) - number_of_graphs
     print(num_cliques)
@@ -369,7 +368,7 @@ if __name__ == '__main__':
         args.exp_name += '_typed'
     else:
         args.exp_name += '_untyped'
-    args.exp_name += "_gatandmotif_atom_no_fused_"
+    args.exp_name += "_gatandmotif_attention_"
 
     print(args)
     test_id = '{}'.format(args.logdir)
@@ -424,7 +423,7 @@ if __name__ == '__main__':
         sampler,
         device=device,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         drop_last=False,
     )
     motif_val_dataloader = dgl.dataloading.NodeDataLoader(
@@ -505,6 +504,7 @@ if __name__ == '__main__':
             for block in blocks:
                 IDs.append(block.edata[dgl.EID])
             rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, atom_labels, bond_labels = [], [], [], [], [], [], []
+            dis_nums = []
             for i in selected_idx:
                 rxn, pattern_feat, atom, adj, graph, _, _, atom_label, bond_label = gat_train_data[i]
                 rxn_class.append(rxn)
@@ -514,6 +514,7 @@ if __name__ == '__main__':
                 x_graph.append(graph)
                 atom_labels.append(atom_label)
                 bond_labels.append(bond_label)
+                dis_nums.append(len(np.where(bond_label>0)[0])/2)
 
             batch_inputs, batch_labels, batch_edge_weight = load_subtensor(node_features, labels, edge_weight, IDs,
                                                                            seeds, input_nodes, device)
@@ -551,7 +552,7 @@ if __name__ == '__main__':
             bond_labels = torch.cat(bond_labels_list, dim=0)
             true_bond_label.extend(bond_labels.numpy().tolist())
             label_index = torch.arange(bond_labels.shape[0])
-
+            dis_nums = torch.tensor(dis_nums)
             true_atom_label.extend(atom_labels.numpy().tolist())
             if not args.use_cpu:
                 x_atom = x_atom.cuda()
@@ -559,6 +560,7 @@ if __name__ == '__main__':
                 atom_labels = atom_labels.cuda()
                 bond_labels = bond_labels.cuda()
                 zero = zero.cuda()
+                dis_nums = dis_nums.cuda()
 
             g_dgl = dgl.batch(x_graph)
 
@@ -567,13 +569,15 @@ if __name__ == '__main__':
             location = list(zip(x, y))
             gin.zero_grad()
             # batch graph
-            atom_pred, e_pred = gin(blocks, batch_inputs, batch_edge_weight, g_dgl, x_atom)
+            atom_pred, e_pred,num_pre = gin(blocks, batch_inputs, batch_edge_weight, g_dgl, x_atom)
+            num_pre = num_pre.squeeze()
             # atom_pred, e_pred = GAT_model(g_dgl, x_atom)
             e_pred = e_pred.squeeze()
             loss_h = nn.CrossEntropyLoss(reduction='sum')(atom_pred,
                                                           atom_labels)
             loss_ce = nn.CrossEntropyLoss(reduction='sum')(e_pred,
                                                            bond_labels)
+            loss_dis = nn.BCEWithLogitsLoss(reduction='sum')(num_pre,dis_nums)
 
             start = end = 0
             e_p, e_label = torch.max(e_pred, dim=1)
@@ -611,7 +615,7 @@ if __name__ == '__main__':
             one = torch.ones_like(e_pred)
             new_bond_pred = torch.where(e_pred < 1, e_pred, one)
 
-            loss = loss_ce + loss_h
+            loss = loss_ce + loss_h +loss_dis
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
@@ -683,6 +687,28 @@ if __name__ == '__main__':
             }
             csv_logger.writerow(row)
 
-    csv_logger.close()
     torch.save(gin.state_dict(),
                'checkpoints_3/{}_checkpoint.pt'.format(args.exp_name))
+    gin.load_state_dict(
+        torch.load('checkpoints_3/{}best_checkpoint.pt'.format(args.exp_name),
+                   map_location=torch.device(device)), )
+    motif_test_dataloader = dgl.dataloading.NodeDataLoader(
+        g,
+        test_nid,
+        sampler,
+        device=device,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=False,
+    )
+    test_data = RetroCenterDatasets(root=data_root, data_split='test')
+    test_acc, atomacc=test(gin, motif_test_dataloader, test_data, data_split='test', save_pred=True, files=file)
+    row = {
+        'epoch': 'test_result',
+        'train_acc': str(0),
+        'valid_acc': str(test_acc),
+        'valid_atomacc': str(atomacc),
+        'train_loss': str(0),
+    }
+    csv_logger.writerow(row)
+    csv_logger.close()

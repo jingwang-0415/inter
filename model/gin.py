@@ -124,37 +124,37 @@ class StochasticGAT(nn.Module):
         super(StochasticGAT, self).__init__()
         self.num_layers = num_layers
         self.learn_eps = False
-        self.head = 3
+        self.head = 4
         self.gatlayers = torch.nn.ModuleList()
         self.mlplayers = torch.nn.ModuleList()
         self.batch_norms = torch.nn.ModuleList()
-        for layer in range(0,self.num_layers - 1):
+        for layer in range(0,self.num_layers):
             if layer == 0:
                 self.mlplayers.append(MLP(num_mlp_layers, input_dim, hidden_dim, hidden_dim))
 
-                self.gatlayers.append(GATv2Conv(hidden_dim,hidden_dim, num_heads=self.head,allow_zero_in_degree=True))
+                self.gatlayers.append(GATv2Conv(input_dim,hidden_dim, num_heads=self.head,allow_zero_in_degree=True))
 
             else:
                 self.mlplayers.append(MLP(num_mlp_layers, hidden_dim*self.head, hidden_dim*self.head, hidden_dim))
                 self.gatlayers.append(
-                    GATv2Conv(hidden_dim,hidden_dim, num_heads=self.head,allow_zero_in_degree=True))
+                    GATv2Conv(hidden_dim*self.head,hidden_dim, num_heads=self.head,allow_zero_in_degree=True))
 
             self.batch_norms.append(nn.BatchNorm1d(hidden_dim*self.head))
         self.drop = nn.Dropout(final_dropout)
 
     def forward(self, blocks, h,e):
 
-        for i in range(self.num_layers - 2):
-            h = self.mlplayers[i](h)
+        for i in range(self.num_layers - 1):
+            #h = self.mlplayers[i](h)
             h = self.gatlayers[i](blocks[i], h)
             h = torch.flatten(h,start_dim=1,end_dim=2)
-            h = self.batch_norms[i](h)
-            h = F.relu(h)
+            #h = self.batch_norms[i](h)
+            h = F.elu(h)
             if i != 0:
                 h = self.drop(h)
-        h = self.mlplayers[self.num_layers-2](h)
-        h = self.gatlayers[self.num_layers-2](blocks[self.num_layers-2],h)
-        h = torch.sum(h,dim=1)
+        #h = self.mlplayers[self.num_layers-2](h)
+        h = self.gatlayers[self.num_layers-1](blocks[self.num_layers-1],h)
+        h = torch.mean(h,dim=1)
         return h
 
 class FCL(nn.Module):
@@ -200,7 +200,7 @@ class TwoGIN(nn.Module):
         super(TwoGIN, self).__init__()
         self.device = torch.device('cuda:0')
         self.hidden_dim = hidden_dim
-        self.gin = StochasticGAT(num_layers, num_mlp_layers, input_dim, hidden_dim,
+        self.gin = StochasticGIN(num_layers, num_mlp_layers, input_dim, hidden_dim,
                  output_dim, final_dropout, learn_eps,
                  neighbor_pooling_type).to(self.device)
         self.gin_att = nn.Sequential(
@@ -222,14 +222,22 @@ class TwoGIN(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(gat_hidden_dim, 32),
             nn.ReLU(inplace=True),
-            nn.Linear(32, 3),
+            nn.Linear(32, 6),
         )
         self.linear_atom = nn.Sequential(
             nn.Linear(gat_hidden_dim*2+hidden_dim, 32),
-             nn.ReLU(inplace=True),
+            nn.ReLU(inplace=True),
             nn.Dropout(0.2),
             nn.Linear(32, 2),
         )
+        # self.linear_fuse = nn.Sequential(
+        #     nn.Linear(gat_hidden_dim + hidden_dim, gat_hidden_dim),
+        #     nn.ReLU(inplace=True),
+        #     nn.Dropout(0.2),
+        #     nn.Linear(gat_hidden_dim, 32),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(32, 1),
+        # )
         #self.graphcnn = GraphCNN(5, num_mlp_layers, pre_input_dim, 16, 16, dropout_0, learn_eps, graph_pooling_type, neighbor_pooling_type, self.device).to(self.device)
         #self.fcl = FCL(hidden_dim+16, output_dim).to(self.device)
 
@@ -240,15 +248,17 @@ class TwoGIN(nn.Module):
 
         h_att = self.gin_att(gin_h)
         h_readout_att = self.gat_att(h_readout)
-        att_cat = torch.cat((h_att,h_readout_att),dim=1)
-        att_cat = torch.nn.functional.leaky_relu(att_cat)
-        att_cat = torch.softmax(att_cat,dim=1)
-        a = att_cat[:,0].unsqueeze(dim=1)
-        b = att_cat[:,1].unsqueeze(dim=1)
-        gin_h = gin_h*a
-        h_readout=b*h_readout
-
+        # att_cat = torch.cat((h_att,h_readout_att),dim=1)
+        # att_cat = torch.nn.functional.leaky_relu(att_cat)
+        # att_cat = torch.softmax(att_cat,dim=1)
+        # a = att_cat[:,0].unsqueeze(dim=1)
+        # b = att_cat[:,1].unsqueeze(dim=1)
+        # gin_h = gin_h*a
+        # h_readout=b*h_readout
+        gin_h = h_att*gin_h
+        h_readout = h_readout_att * h_readout
         h = torch.cat((gin_h, h_readout), 1)
+       # num_pre = self.linear_fuse(h)
         eh = dgl.broadcast_edges(g,h)
         ah = dgl.broadcast_nodes(g,h)
         a_fused = torch.cat((pre_h,ah),1)

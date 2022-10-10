@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import dgl
-
+from dgl.nn.pytorch.conv import GATv2Conv
 #改了边的计算方式 不再是聚集临边
 class interGATLayer(nn.Module):
     def __init__(self, in_dim, out_dim, e_in_dim,e_out_dim):
@@ -13,15 +13,15 @@ class interGATLayer(nn.Module):
         self.to_node_fc = nn.Linear(out_dim+e_in_dim+out_dim, out_dim, bias=False)
         self.edge_nor=nn.BatchNorm1d(num_features=e_in_dim, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
         self.e_in_dim=e_in_dim
-        self.aggre_embed_edge=nn.Linear(out_dim*2+2*e_in_dim,e_out_dim,bias=False)#修改了 没有残差
-        self.edge_drop=nn.Dropout(p=0.0)
-        self.node_drop=nn.Dropout(p=0.0)
+        self.aggre_embed_edge=nn.Linear(out_dim*2+2*e_in_dim,e_out_dim,bias=False)
+        self.edge_drop=nn.Dropout(p=0.1)
+        self.node_drop=nn.Dropout(p=0.1)
         self.attention_drop=nn.Dropout(p=0.3)
         self.fc_self = nn.Linear(in_dim, out_dim, bias=False)
         self.embed_edge = nn.Linear(e_in_dim, e_in_dim, bias=False)
         self.edge_sf_atten=nn.Linear(e_in_dim,1,bias=False)
         self.edge_linear=nn.Linear(e_in_dim*3,e_in_dim)
-        self.concentrate_h = nn.Linear(out_dim*2+e_in_dim,out_dim)#修改了 没有残差
+        self.concentrate_h = nn.Linear(out_dim*2+e_in_dim,out_dim)
         self.reset_parameters()
     def reset_parameters(self):
         gain = nn.init.calculate_gain('relu')
@@ -38,25 +38,27 @@ class interGATLayer(nn.Module):
     def self_attention(self,edges):
         z2 = torch.cat([edges.src['h'], edges.dst['h']],
                        dim=1)
-        node_self_attentin=self.node_sf_attten(z2)
+        #node_self_attentin=self.node_sf_attten(z2)
         edge_embed=self.embed_edge(edges.data['w'])
         edge_self_attention=self.edge_sf_atten(edge_embed)
         edge_self_attention=F.leaky_relu(edge_self_attention, negative_slope=0.1)
         edge_self_attention=F.softmax(edge_self_attention,dim=1)
         edge_embed=edge_self_attention*edge_embed
-        return {'nsw':F.leaky_relu(node_self_attentin,negative_slope=0.1),'w':edge_embed}
-
+        #return {'nsw':F.leaky_relu(node_self_attentin,negative_slope=0.1),'w':edge_embed}
+        return {'nsw':F.leaky_relu(z2,negative_slope=0.1),'w':edge_embed}
     def inter_attention(self, edges):
 
         z2 = torch.cat([edges.src['h'], edges.dst['h'],edges.data['w']],
                        dim=1)
-        a = self.attn_fc(z2)
-        a=self.attention_drop(a)
-        edge_weight=F.leaky_relu(a, negative_slope=0.1)
+        # a = self.attn_fc(z2)
+        # a=self.attention_drop(a)
+        edge_weight=F.leaky_relu(z2, negative_slope=0.1)
+        edge_weight = self.attn_fc(edge_weight)
+        edge_weight = self.attention_drop(edge_weight)
         edge_weight=F.softmax(edge_weight,dim=1)
         edge_embed=edge_weight*edges.data['w']
-        return {'inw': F.leaky_relu(a, negative_slope=0.1),'w':edge_embed}
-
+        #return {'inw': F.leaky_relu(a, negative_slope=0.1),'w':edge_embed}
+        return {'inw': F.leaky_relu(z2, negative_slope=0.1), 'w': edge_embed}
     def message_func(self, edges):
         return {
             'h': edges.src['h'],
@@ -68,7 +70,8 @@ class interGATLayer(nn.Module):
         return {'sh':edges.src['h'],'dh':edges.dst['h'],'w':edges.data['w'],'inw':edges.data['inw']}
 
     def reduce_func(self, nodes):
-        alpha =F.softmax(nodes.mailbox['nsw'], dim=1)
+        attention = self.node_sf_attten(nodes.mailbox['nsw'])
+        alpha =F.softmax(attention, dim=1)
         #t = torch.cat([nodes.mailbox['h'], nodes.mailbox['w']], dim=-1)
         #t=nodes.mailbox['h']
         t=nodes.mailbox['h']
@@ -82,7 +85,8 @@ class interGATLayer(nn.Module):
     #     hw=self.attr_node(nodes.data['h'])
     #     return {'hw':F.leaky_relu(hw, negative_slope=0.1)}
     def reduce_func2(self,nodes):
-        alpha =F.softmax(nodes.mailbox['inw'], dim=1)
+        attention = self.attn_fc(nodes.mailbox['inw'])
+        alpha =F.softmax(attention, dim=1)
         t=torch.cat([nodes.mailbox['sh'], nodes.mailbox['w']], dim=-1)
         h = torch.sum(alpha * t, dim=1)
         # w=torch.sum(alpha* nodes.mailbox['w'],dim=1)
@@ -188,7 +192,7 @@ class GATNet(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(128, 32),
             nn.ReLU(inplace=True),
-            nn.Linear(32, 3),
+            nn.Linear(32, 6),
         )
         self.linear_atom = nn.Sequential(
             nn.Linear(128, 32),
