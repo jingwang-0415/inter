@@ -50,19 +50,19 @@ def smarts2smiles(smarts, canonical=True):
     mol = Chem.MolFromSmiles(t, sanitize=False)
     return Chem.MolToSmiles(mol, canonical=canonical)
 
-def get_smarts_pieces(mol, src_adj, target_adj, add_bond=False):
-    m, n = src_adj.shape
-    emol = Chem.EditableMol(mol)
-    for j in range(m):
-        for k in range(j + 1, n):
-            if target_adj[j][k] == src_adj[j][k]:
-                continue
-            if 0 == target_adj[j][k]:
-                emol.RemoveBond(j, k)
-            elif add_bond:
-                emol.AddBond(j, k, Chem.rdchem.BondType.SINGLE)
-    synthon_smiles = Chem.MolToSmiles(emol.GetMol(), isomericSmiles=True)
-    return synthon_smiles
+# def get_smarts_pieces(mol, src_adj, target_adj, add_bond=False):
+#     m, n = src_adj.shape
+#     emol = Chem.EditableMol(mol)
+#     for j in range(m):
+#         for k in range(j + 1, n):
+#             if target_adj[j][k] == src_adj[j][k]:
+#                 continue
+#             if 0 == target_adj[j][k]:
+#                 emol.RemoveBond(j, k)
+#             elif add_bond:
+#                 emol.AddBond(j, k, Chem.rdchem.BondType.SINGLE)
+#     synthon_smiles = Chem.MolToSmiles(emol.GetMol(), isomericSmiles=True)
+#     return synthon_smiles
 def getid2map(mol,atom_label):
     aids = np.where(atom_label > 0)[0]
     mapnums = []
@@ -85,6 +85,14 @@ def getmap2id(smiles,mapnums):
     if len(mapnum2id) == 0:
         mapnum2id.append(-1)
     return mapnum2id
+add_token =    {'[OH2]':'O',
+     '[ClH]':'Cl',
+     '[cH3]':'c',
+     '[NH3]':'N',
+     '[IH]':'I',
+     '[cH2]':'c',
+     '[cH4]':'c', '[BrH]':'Br', '[sH2]':'s','[Cl]':'Cl',
+     '[SH2]':'S', '[oH2]':'o', '[nH2]':'n', '[Br]':'Br', '[CH4]':'C', '[PH3]':'P', '[BH]':'B'}
 def smiles_edit(smiles, ids,canonical=True):
     mol = Chem.MolFromSmiles(smiles,sanitize=False)
     maps = []
@@ -95,25 +103,43 @@ def smiles_edit(smiles, ids,canonical=True):
         SetAtomMapnum(atom,id+1)
 
         maps.append(':'+str(id+1)+']')
-    smiles = Chem.MolToSmiles(mol,canonical=True)
+    smiles = Chem.MolToSmiles(mol,canonical=canonical)
     loc = [smiles.find(x) for x in maps]
-
     loc.sort()
     begin = loc[0]
     end = loc[-1]
-
     for i in range(begin,-1,-1):
         if smiles[i] == '[':
-            while smiles[i-1].isdigit() or smiles[i-1] =='(':
-                i -= 1
+            while smiles[i-1] =='(' or smiles[i-1] == '=' or smiles[i-1] == '#'  :
+
+                if smiles[i-1] == '=' or smiles[i-1] == '#':
+                    i -= 2
+                else:
+                    i -= 1
+                if i>0 and smiles[i] == ']':
+                    while i > 0:
+                        if smiles[i-1] == '[':
+                            i -= 1
+                            break
+                        i -= 1
+
             new_smiles = smiles[:i] + '|' +smiles[i:]
             break
 
-    for i in range(end,len(new_smiles)):
+    for i in range(end+1,len(new_smiles)):
         if new_smiles[i] == ']':
-            while i<len(new_smiles)-1 and (new_smiles[i+1].isdigit() or new_smiles[i+1] ==')'):
-                i += 1
-            new_smiles = new_smiles[:i+1] + '|' +new_smiles[i+1:]
+            while i<len(new_smiles)-1 and (new_smiles[i+1].isdigit() or new_smiles[i+1] ==')' or new_smiles[i+1] == '=' or new_smiles[i+1] == '#'):
+                if new_smiles[i + 1] == '=' or new_smiles[i + 1] == '#':
+                    i += 2
+                else:
+                    i += 1
+                if new_smiles[i] == '[':
+                    while i<len(new_smiles)-1:
+                        if new_smiles[i+1] == ']':
+                            i += 1
+                            break
+                        i += 1
+            new_smiles = new_smiles[:i + 1] + '|' + new_smiles[i + 1:]
             break
     new_smiles = re.sub(':\d*','',new_smiles)
     abs = re.findall('\|\[[^\]]]',new_smiles)
@@ -129,6 +155,18 @@ def smiles_edit(smiles, ids,canonical=True):
         a = re.split('\[|\]', i)
         item = a[1] + a[2]
         new_smiles = re.sub('\[[^\]]]\||\[[^\]]]\d\|', item, new_smiles)
+    abs = re.findall('\[[^\]]]',new_smiles)
+
+    for i in abs:
+        a = re.split('\[|\]', i)
+        item = a[1]
+        new_smiles = re.sub('\[[^\]]]', item, new_smiles,count=1)
+
+
+    for key in add_token.keys():
+        if key in new_smiles:
+            new_smiles = new_smiles.replace(key,add_token[key])
+
     return new_smiles
 
 pred_results = 'log/test_result_mol_{}_{}.txt'.format(args.dataset, args.typed)
@@ -138,6 +176,9 @@ with open(pred_results) as f:
 bond_pred_results = 'log/test_disconnection_{}_{}.txt'.format(args.dataset, args.typed)
 with open(bond_pred_results) as f:
     bond_pred_results = f.readlines()
+atom_results = 'log/test_result_mol_atom_{}_{}.txt'.format(args.dataset, args.typed)
+with open(atom_results) as f:
+    atom_results = f.readlines()
 
 dataset_dir = 'data/{}/test'.format(args.dataset)
 reaction_data_files = [f for f in os.listdir(dataset_dir) if f.endswith('.pkl')]
@@ -160,8 +201,10 @@ assert len(product_smiles) == len(bond_pred_results)
 
 cnt = 0
 guided_pred_results = []
+pred_bond_results = []
 bond_disconnection = []
 bond_disconnection_gt = []
+pred_atom_label_lists = []
 for i in range(len(bond_pred_results)):
     bond_pred_items = bond_pred_results[i].strip().split()
     bond_change_num = int(bond_pred_items[1]) * 2
@@ -173,6 +216,7 @@ for i in range(len(bond_pred_results)):
     gt_adj_index = gt_adj_index[:bond_change_num_gt]
 
     pred_adj_list = pred_results[3 * i + 2].strip().split(' ')
+    pred_bond_results.append(pred_adj_list)
     pred_adj_list = np.array([float(k) for k in pred_adj_list])
     pred_adj_index = np.argsort(-pred_adj_list)
     pred_adj_index = pred_adj_index[:bond_change_num]
@@ -182,7 +226,8 @@ for i in range(len(bond_pred_results)):
     res = set(gt_adj_index) == set(pred_adj_index)
     guided_pred_results.append(int(res))
     cnt += res
-
+    pred_atom_label_list = atom_results[3 * i + 2].strip().split(' ')
+    pred_atom_label_lists.append(np.array(pred_atom_label_list,dtype=np.int))
 
 print('guided bond_disconnection prediction cnt and acc:', cnt, cnt / len(bond_pred_results))
 print('bond_disconnection len:', len(bond_disconnection))
@@ -190,21 +235,37 @@ print('bond_disconnection len:', len(bond_disconnection))
 
 # Generate synthons from bond disconnection prediction
 synthons = []
-map_nums = []
-for i, prod_adj in enumerate(product_adjs):
-    x_adj = np.array(prod_adj)
+# map_nums = []
+for i, prod_mol in enumerate(product_mols):
+    edits = []
+    ids = bond_disconnection[i]
+    x_adj = np.array(product_adjs[i])
     # find 1 index
     idxes = np.argwhere(x_adj > 0)
-    pred_adj = prod_adj.copy()
-    for k in bond_disconnection[i]:
+    pred_adj = product_adjs[i].copy()
+    for k in ids:
         idx = idxes[k]
-        assert pred_adj[idx[0], idx[1]] == 1
-        pred_adj[idx[0], idx[1]] = 0
+        edits.append((int(idx[0]),int(idx[1]),BOND_LABEL_TO_FLOAT[float(pred_bond_results[i][k])]))
+    if len(edits) == 0:
+        atom_label = pred_atom_label_lists[i]
+        atom_label = np.array(atom_label,dtype=int)
+        idx = np.where(atom_label>0)[0]
+        for id in idx :
+            edits.append((int(id),0,None))
+    new_mol = Chem.RWMol(prod_mol)
+    aidtmap2 = {atom.GetIdx() : atom.GetAtomMapNum()for atom in prod_mol.GetAtoms()}
+    aidtmap = {atom.GetIdx() : atom.GetAtomMapNum()for atom in new_mol.GetAtoms()}
+    assert  aidtmap == aidtmap2
+    # for k in bond_disconnection[i]:
+    #     idx = idxes[k]
+    #     assert pred_adj[idx[0], idx[1]] == 1
+    #     pred_adj[idx[0], idx[1]] = 0
 
-    pred_synthon = get_smarts_pieces(product_mols[i], prod_adj, pred_adj)
-    map_num = getid2map(product_mols[i],atom_labels[i])
+    pred_synthon = mol_edit(new_mol,edits)
+    pred_synthon = Chem.MolToSmiles(pred_synthon, isomericSmiles=True)
+    #map_num = getid2map(product_mols[i],pred_atom_label_lists[i])
     synthons.append(pred_synthon)
-    map_nums.append(map_num)
+    #map_nums.append(map_num)
 
 
 with open('opennmt_data/src-test.txt') as f:
@@ -218,20 +279,20 @@ src_test_prediction = os.path.join(savedir, 'src-test-prediction.txt')
 print('save src_test_prediction:', src_test_prediction)
 cnt = 0
 with open(src_test_prediction, 'w') as f:
-    for src, synthon,num in zip(srcs, synthons,map_nums):
+    for src, synthon in zip(srcs, synthons):
         src_items = src.split(' ')
         src_items[2] = smi_tokenizer(smarts2smiles(src_items[2]))
         if args.typed == 'untyped':
             src_items[1] = '[RXN_0]'
 
         syns = synthon.split('.')
-        syns_map2id = [getmap2id(s,num) for s in  syns]
+        #syns_map2id = [getmap2id(s,num) for s in  syns]
         syns = [smarts2smiles(s, canonical=False) for s in syns]
 
         # Double check the synthon prediction accuracy
         syns_gt = [smarts2smiles(s, canonical=False) for s in src_items[4:] if s != '.']
         cnt += set(syns_gt) == set(syns)
-        syns = [smiles_edit(s,id,canonical=False) for s,id in zip(syns,syns_map2id)]
+        #syns = [smiles_edit(s,id,canonical=False) for s,id in zip(syns,syns_map2id)]
         syns = [smi_tokenizer(s) for s in syns]
         src_line = ' '.join(src_items[1:4]) + ' ' + ' . '.join(syns) + '\n'
         f.write(src_line)

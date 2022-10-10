@@ -2,7 +2,7 @@ import numpy as np
 import argparse
 import pickle
 import ChemReload
-from ChemReload import GetAtomSymbol,GetAtomMapNum,GetAtomId,GetAtomByid,GetMolAtoms,GetNerghbors
+from ChemReload import GetAtomSymbol,GetAtomMapNum,GetAtomId,GetAtomByid,GetMolAtoms,GetNerghbors,mol_edit,BOND_LABEL_TO_FLOAT
 from rdkit.Chem import ChemicalFeatures
 from rdkit import RDConfig
 from rdkit import Chem
@@ -248,6 +248,44 @@ def getmap2id(smiles,mapnums):
     if len(mapnum2id) == 0:
         mapnum2id.append(-1)
     return mapnum2id
+
+def new_smarts_edit(mol,bond_labels,reactants,atomlabel):
+    m,n = np.where(bond_labels > 0)
+    ids = list(zip(m,n))
+    visited = []
+    new_mol = Chem.RWMol(mol)
+    aidtmap2 = {atom.GetIdx() : atom.GetAtomMapNum()for atom in mol.GetAtoms()}
+    aidtmap = {atom.GetIdx() : atom.GetAtomMapNum()for atom in new_mol.GetAtoms()}
+    assert  aidtmap == aidtmap2
+    edits = []
+    for id in ids :
+        begin,end = id
+        if (begin,end) not in visited:
+            visited.append((begin,end))
+            visited.append((end,begin))
+            label = bond_labels[begin][end]
+            edits.append((int(begin),int(end),BOND_LABEL_TO_FLOAT[label]))
+    if len(edits) == 0:
+        ids = np.where(atomlabel > 0)[0]
+        for id in ids :
+            edits.append((int(id),0,None))
+    syn = mol_edit(new_mol,edits)
+    synthon_smiles = Chem.MolToSmiles(syn, isomericSmiles=True)
+    synthons = synthon_smiles.split('.')
+    syn_idx_list = [get_idx(synthon) for synthon in synthons]
+    react_idx_list = [get_idx(react) for react in reactants]
+    react_max_common_synthon_index = []
+    for react_idx in react_idx_list:
+        react_common_idx_cnt = []
+        for syn_idx in syn_idx_list:
+            common_idx = list(set(syn_idx) & set(react_idx))
+            react_common_idx_cnt.append(len(common_idx))
+        max_cnt = max(react_common_idx_cnt)
+        react_max_common_index = react_common_idx_cnt.index(max_cnt)
+        react_max_common_synthon_index.append(react_max_common_index)
+    react_synthon_index = np.argsort(react_max_common_synthon_index).tolist()
+    reacts = [reactants[k] for k in react_synthon_index]
+    return ' . '.join(synthons), ' . '.join(reacts)
 def over_write_get_smarts_pieces(mol, bond_lables, mapnums,reacts, add_bond=False):
     m, n = np.where(bond_lables > 0)
     ids = list(zip(m, n))
@@ -344,22 +382,24 @@ def generate_opennmt_data(save_dir, set_name, data_files):
         bond_label = rxn_data['bond_label']
         reactant = Chem.MolToSmiles(reactant_mol)
         product = Chem.MolToSmiles(product_mol)
+        #add_result = rxn_data['add_edits']
         reactants = reactant.split('.')
-        aids = np.where(atom_label > 0)[0]
-        mapnums = []
-        for i in aids:
-            atom = GetAtomByid(product_mol, i)
-            neighbors = GetNerghbors(atom)
-            local_mapnums = [GetAtomMapNum(x) for x in neighbors]
-            message =GetAtomMapNum(atom)
-            mapnums.append(message)
-            mapnums.extend(local_mapnums)
-        src_item, tgt_item, synthonsmap2id,reactantsmap2id= over_write_get_smarts_pieces(product_mol, bond_label,mapnums,
-                                               reactants)
+        #if len(add_result) != 0:
+        #    print('1')
+        #aids = np.where(atom_label > 0)[0]
+        # mapnums = []
+        # for i in aids:
+        #     atom = GetAtomByid(product_mol, i)
+        #     neighbors = GetNerghbors(atom)
+        #     local_mapnums = [GetAtomMapNum(x) for x in neighbors]
+        #     message =GetAtomMapNum(atom)
+        #     mapnums.append(message)
+        #     mapnums.extend(local_mapnums)
+        src_item, tgt_item = new_smarts_edit(product_mol, bond_label,reactants,atom_label)
         src_data.append([idx, reaction_cls, product, src_item])
         tgt_data.append(tgt_item)
-        sys_map2id.append(synthonsmap2id)
-        tgt_map2id.append(reactantsmap2id)
+        # sys_map2id.append(synthonsmap2id)
+        # tgt_map2id.append(reactantsmap2id)
 
     print('size', len(src_data))
 
@@ -374,16 +414,16 @@ def generate_opennmt_data(save_dir, set_name, data_files):
             os.path.join('../opennmt_data', 'tgt-{}.txt'.format(set_name)), 'w') as f:
         for tgt in tgt_data:
             f.write('{}\n'.format(tgt))
-    with open(os.path.join('../opennmt_data', 'sysmap2id-{}.txt'.format(set_name)), 'w') as f:
-        for sys in sys_map2id:
-            for i in range(len(sys)):
-                f.write('{}\t'.format(sys[i]))
-            f.write('\n')
-    with open(os.path.join('../opennmt_data', 'tgtmap2id-{}.txt'.format(set_name)), 'w') as f:
-        for tgt in tgt_map2id:
-            for i in range(len(tgt)):
-                f.write('{}\t'.format(tgt[i]))
-            f.write('\n')
+    # with open(os.path.join('../opennmt_data', 'sysmap2id-{}.txt'.format(set_name)), 'w') as f:
+    #     for sys in sys_map2id:
+    #         for i in range(len(sys)):
+    #             f.write('{}\t'.format(sys[i]))
+    #         f.write('\n')
+    # with open(os.path.join('../opennmt_data', 'tgtmap2id-{}.txt'.format(set_name)), 'w') as f:
+    #     for tgt in tgt_map2id:
+    #         for i in range(len(tgt)):
+    #             f.write('{}\t'.format(tgt[i]))
+    #         f.write('\n')
 def preprocess(save_dir, reactants, products,smiles, reaction_types=None,):
     """
     preprocess reaction data to extract graph adjacency matrix and features
@@ -482,67 +522,67 @@ if __name__ == '__main__':
     datadir = '../data/{}/canonicalized_csv'.format(args.dataset)
     savedir = '../data/{}/'.format(args.dataset)
 
-    for data_set in ['test', 'valid', 'train']:
-        save_dir = os.path.join(savedir, data_set)
-        csv_path = os.path.join(datadir, data_set + '.csv')
-        csv = pd.read_csv(csv_path)
-        reaction_list = csv['reactants>reagents>production']
-        reactant_smarts_list = list(
-            map(lambda x: x.split('>>')[0], reaction_list))
-        product_smarts_list = list(
-            map(lambda x: x.split('>>')[1], reaction_list))
-        reaction_class_list = list(map(lambda x: int(x) - 1, csv['class']))
-        # Extract product adjacency matrix and atom features
-        preprocess(
-            save_dir,
-            reactant_smarts_list,
-            product_smarts_list,
-            reaction_list,
-            reaction_class_list,
-        )
-    # for data_set in ['train','test', 'valid' ]:
-    #      save_dir = os.path.join(savedir, data_set)
-    #      data_files = [f for f in os.listdir(save_dir) if f.endswith('.pkl')]
-    #      data_files.sort()
-    #      generate_opennmt_data(save_dir, data_set, data_files)
-    #
+    # for data_set in ['test', 'valid', 'train']:
+    #     save_dir = os.path.join(savedir, data_set)
+    #     csv_path = os.path.join(datadir, data_set + '.csv')
+    #     csv = pd.read_csv(csv_path)
+    #     reaction_list = csv['reactants>reagents>production']
+    #     reactant_smarts_list = list(
+    #         map(lambda x: x.split('>>')[0], reaction_list))
+    #     product_smarts_list = list(
+    #         map(lambda x: x.split('>>')[1], reaction_list))
+    #     reaction_class_list = list(map(lambda x: int(x) - 1, csv['class']))
+    #     # Extract product adjacency matrix and atom features
+    #     preprocess(
+    #         save_dir,
+    #         reactant_smarts_list,
+    #         product_smarts_list,
+    #         reaction_list,
+    #         reaction_class_list,
+    #     )
+    for data_set in ['train','test', 'valid' ]:
+         save_dir = os.path.join(savedir, data_set)
+         data_files = [f for f in os.listdir(save_dir) if f.endswith('.pkl')]
+         data_files.sort()
+         generate_opennmt_data(save_dir, data_set, data_files)
+
     #  # Data augmentation for training data
-    # with open(os.path.join('../opennmt_data', 'tgt-train.txt'), 'r') as f:
-    #      targets = [l.strip() for l in f.readlines()]
-    # with open(os.path.join('../opennmt_data', 'src-train.txt'), 'r') as f:
-    #      sources = [l.strip() for l in f.readlines()]
+    with open(os.path.join('../opennmt_data', 'tgt-train.txt'), 'r') as f:
+         targets = [l.strip() for l in f.readlines()]
+    with open(os.path.join('../opennmt_data', 'src-train.txt'), 'r') as f:
+         sources = [l.strip() for l in f.readlines()]
     # with open(os.path.join('../opennmt_data', 'tgtmap2id-train.txt'), 'r') as f:
     #      tgtmap = [l.strip() for l in f.readlines()]
     # with open(os.path.join('../opennmt_data', 'sysmap2id-train.txt'), 'r') as f:
     #      srcmap = [l.strip() for l in f.readlines()]
-    # sources_new, targets_new = [], []
-    # srcmap2id_new , targetsmap2id_new =[],[]
-    # for src, tgt,s,t in zip(sources, targets,srcmap,tgtmap):
-    #      sources_new.append(src)
-    #      targets_new.append(tgt)
-    #      srcmap2id_new.append(s)
-    #      targetsmap2id_new.append(t)
-    #      src_produdct, src_synthon = src.split('[PREDICT]')
-    #      synthons = src_synthon.strip().split('.')
-    #      reactants = tgt.split('.')
-    #      if len(reactants) == 1:
-    #          continue
-    #      synthons.reverse()
-    #      reactants.reverse()
+    sources_new, targets_new = [], []
+    srcmap2id_new , targetsmap2id_new =[],[]
+    for src, tgt in zip(sources, targets):
+         sources_new.append(src)
+         targets_new.append(tgt)
+         # srcmap2id_new.append(s)
+         # targetsmap2id_new.append(t)
+         src_produdct, src_synthon = src.split('[PREDICT]')
+         synthons = src_synthon.strip().split('.')
+         reactants = tgt.split('.')
+         if len(reactants) == 1:
+             continue
+         synthons.reverse()
+         reactants.reverse()
     #      smaps = s.split('\t')
     #      tmaps = t.split('\t')
     #      smaps.reverse()
     #      tmaps.reverse()
-    #      sources_new.append(src_produdct + ' [PREDICT] ' + ' . '.join(synthons))
-    #      targets_new.append(' . '.join(reactants))
+         sources_new.append(src_produdct + ' [PREDICT] ' + ' . '.join(synthons))
+         targets_new.append(' . '.join(reactants))
     #      srcmap2id_new.append('\t'.join(smaps))
     #      targetsmap2id_new.append('\t'.join(tmaps))
-    # with open(os.path.join('../opennmt_data', 'tgt-train-aug.txt'), 'w') as f:
-    #      for tgt in targets_new:
-    #          f.write(tgt.strip() + '\n')
-    # with open(os.path.join('../opennmt_data', 'src-train-aug.txt'), 'w') as f:
-    #      for src in sources_new:
-    #          f.write(src.strip() + '\n')
+    with open(os.path.join('../opennmt_data', 'tgt-train-aug.txt'), 'w') as f:
+         for tgt in targets_new:
+             f.write(tgt.strip() + '\n')
+    with open(os.path.join('../opennmt_data', 'src-train-aug.txt'), 'w') as f:
+         for src in sources_new:
+             f.write(src.strip() + '\n')
     # with open(os.path.join('../opennmt_data', 'tgtmap2id-train-aug.txt'), 'w') as f:
     #      for t in targetsmap2id_new:
     #          f.write(t.strip() + '\n')
