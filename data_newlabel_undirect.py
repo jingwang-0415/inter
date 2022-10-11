@@ -45,7 +45,7 @@ class RetroCenterDatasets(Dataset):
 
         x_bond = reaction_data['product_bond_features'].astype(np.float32)
         x_adj = reaction_data['product_adj']
-        y_adj = reaction_data['target_adj']
+        product_smiles = Chem.MolToSmiles(reaction_data['product_mol'])
         rxn_class = reaction_data['rxn_type']
         rxn_class = np.eye(10)[rxn_class]
         product_atom_num = len(x_atom)
@@ -67,7 +67,7 @@ class RetroCenterDatasets(Dataset):
         w=torch.from_numpy(x_bond[x_adj])
         x_graph.edata['w']=w#edate['w']为边分配特征  ndata['x']为节点分配特征
 
-        return rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, y_adj,x_groups,atom_label,bond_label
+        return rxn_class, x_pattern_feat, x_atom, x_adj, x_graph, product_smiles,x_groups,atom_label,bond_label
 
     def __len__(self):
         return len(self.data_files)
